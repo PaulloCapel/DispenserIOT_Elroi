@@ -43,11 +43,11 @@ Descrição de pinos
 */
 
 
-uint8_t S_Detector_Pin = 34;
-uint8_t S_Temporizador_Pin = 35;
-uint8_t Bomba_Pin = 26, LedVD_Pin = 25;
+uint8_t S_DetectorPin = 34;
+uint8_t S_TemporizadorPin = 35;
+uint8_t BombaPin = 26, LedVDPin = 25;
 
-uint8_t A0221AU_RX_Pin = 33;
-uint8_t A0221AU_TX_Pin = 32;
+uint8_t A0221AU_RXPin = 33;
+uint8_t A0221AU_TXPin = 32;
 
 #endif
