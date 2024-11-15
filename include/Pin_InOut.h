@@ -45,7 +45,9 @@ Descrição de pinos
 
 uint8_t S_DetectorPin = 34;
 uint8_t S_TemporizadorPin = 35;
-uint8_t BombaPin = 26, LedVDPin = 25;
+uint8_t BombaPin = 26;
+uint8_t LedVDPin = 25;
+uint8_t LedVMPin = 27;
 
 uint8_t A0221AU_RXPin = 33;
 uint8_t A0221AU_TXPin = 32;

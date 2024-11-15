@@ -1,4 +1,3 @@
-// web_page.h
 #ifndef WEB_PAGE_H
 #define WEB_PAGE_H
 
@@ -26,7 +25,7 @@ const char* htmlPage = R"rawliteral(
             border: 1px solid #ccc;
             border-radius: 5px;
         }
-        input[type="submit"] {
+        input[type="submit"], button {
             background-color: #4CAF50;
             color: white;
             padding: 10px;
@@ -34,7 +33,7 @@ const char* htmlPage = R"rawliteral(
             border-radius: 5px;
             cursor: pointer;
         }
-        input[type="submit"]:hover {
+        input[type="submit"]:hover, button:hover {
             background-color: #45a049;
         }
     </style>
@@ -42,17 +41,35 @@ const char* htmlPage = R"rawliteral(
 <body>
     <h2>Escolha sua rede Wi-Fi</h2>
     <form action='/save' method='POST'>
-        Rede Wi-Fi: <select name='ssid'>)rawliteral";
-
-const char* htmlEnd = R"rawliteral(
-        </select><br>
+        Rede Wi-Fi: <select name='ssid'>
+            <option value=''>Nenhuma rede encontrada</option>
+        </select>
+        <button type="button" onclick="scanNetworks()">Buscar Redes</button>
+        <br>
         Senha: <input type='password' name='password' required><br>
         Porta: <input type='text' name='porta' required><br>
         ID do Hardware: <input type='text' name='hwid' required><br>
         <input type='submit' value='Salvar'>
     </form>
+    <script>
+        function scanNetworks() {
+            fetch('/scan')
+                .then(response => response.json())
+                .then(data => {
+                    const select = document.querySelector('select[name="ssid"]');
+                    select.innerHTML = '';
+                    data.networks.forEach(net => {
+                        const opt = document.createElement('option');
+                        opt.value = net.ssid;
+                        opt.textContent = `${net.ssid} (Sinal: ${net.signal} dBm)`;
+                        select.appendChild(opt);
+                    });
+                });
+        }
+    </script>
 </body>
 </html>
 )rawliteral";
 
 #endif // WEB_PAGE_H
+

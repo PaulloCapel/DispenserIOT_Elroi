@@ -5,8 +5,11 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <hardwareserial.h>
+
+
 /*LIB SALVAR ESCALA DE MEDICAO*/
-#include <EEPROM.h>
+#include <EEPROM.h> 
+#include <Preferences.h> // flash memory in esp32 better than EEPROM
 
 
 /*LIB DE GERENCIADO FREERTOS*/
@@ -24,6 +27,7 @@
 
 
 #include <DNSServer.h>
+#include <WebServer.h>
 
 
 /*
@@ -35,10 +39,14 @@
   uC              : ESP32 WROOM-32
   SO              : FreeRTOS
 
-  
+  CORE 0  PRO_CPU_NUM - Faz funções inerentes ao controle do processo
+  CORE 1  APP_CPU_NUM - Faz funções inerentes a comunicação e status da placa
 
 
 
 */
+
+
+
 
 #endif
