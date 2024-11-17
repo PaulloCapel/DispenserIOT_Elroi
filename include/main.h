@@ -4,13 +4,13 @@
 /*LIB ARDUINO*/
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WebServer.h>
 #include <hardwareserial.h>
+#include <time.h>
 
 
 /*LIB SALVAR ESCALA DE MEDICAO*/
-#include <EEPROM.h> 
 #include <Preferences.h> // flash memory in esp32 better than EEPROM
-
 
 /*LIB DE GERENCIADO FREERTOS*/
 #include "freertos/FreeRTOS.h"
@@ -18,16 +18,21 @@
 #include "freertos/timers.h"
 #include "freertos/event_groups.h"
 #include <esp_task_wdt.h>
-#include <esp_log.h>
+
+#include <esp_log.h> // native log on esp 32
 /*LIB DE AUXILIARES*/
 
 #include <0A41SK.h>
 #include <RV1_Timer.h>
 
+// LIB DO PN532
+
+//Biblioteca -----------------------------------------------------------------------------------------
+
+#include <Adafruit_PN532.h>
+#include <Wire.h>
 
 
-#include <DNSServer.h>
-#include <WebServer.h>
 
 
 /*

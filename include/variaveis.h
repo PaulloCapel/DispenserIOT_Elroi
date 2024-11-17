@@ -2,6 +2,8 @@
 #define Variaveis_h
 #include <main.h>
 
+static const char *InitTag = "[SETUP]";
+
 // task handles
 
 TaskHandle_t    xTask_WifiConfigHandle,           // ONLY FIRST CONFIG, AND AFTER DELETE TASK
@@ -31,10 +33,11 @@ EventGroupHandle_t xEventGroupStatusHandle;
 #define xEvG_OnLedVM                 0x08  // 0000 1000 // rename when fuction is defined
 #define xEvG_OnLedVM_VD              0x10  // 0001 0000 // rename when fuction is defined
 #define xEvG_OffLedVM_VD             0x20  // 0010 0000 // rename when fuction is defined
-#define BIT_6                        0x40  // 0100 0000 // rename when fuction is defined
-#define BIT_7                        0x80  // 1000 0000 // rename when fuction is defined
+#define xEvG_OnLedEsp32              0x40  // 0100 0000 // rename when fuction is defined
+#define xEvG_OffLedEsp32             0x80  // 1000 0000 // rename when fuction is defined
 
 // variaveis da configuração wifi
+
 
 
 

@@ -40,16 +40,38 @@ Descrição de pinos
   Entrada         : SPI
   Interligação    : SS GPIO5 || SCK GPIO18 || MISO GPIO19 || MOSI GPIO23
   ----------------------------------------------------------------------------------------
+  Dip Switch      
+  Modelo          : Array of 2 bits
+  Entrada         : Digital
+  Interligação    : BIT0 GPIO2 || BIT1 GPIO4
+
+  
+  ----------------------------------------------------------------------------------------
 */
 
 
-uint8_t S_DetectorPin = 34;
-uint8_t S_TemporizadorPin = 35;
+// saidas
 uint8_t BombaPin = 26;
 uint8_t LedVDPin = 25;
 uint8_t LedVMPin = 27;
+uint8_t LedESP32 = LED_BUILTIN;
 
-uint8_t A0221AU_RXPin = 33;
+// entradas 
+// digitais
+uint8_t DipSwitch_Bit0 = 2;
+uint8_t DipSwitch_Bit1 = 4;
 uint8_t A0221AU_TXPin = 32;
+uint8_t A0221AU_RXPin = 33;
+
+// analogicas
+uint8_t S_DetectorPin = 34;
+uint8_t S_TemporizadorPin = 35;
+
+// comunicação
+
+uint8_t PN532_SLC = 22;
+uint8_t PN532_SDA = 21;
+
+
 
 #endif
