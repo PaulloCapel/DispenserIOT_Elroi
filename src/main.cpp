@@ -1,97 +1,127 @@
 #include <main.h>
 #include <pin_InOut.h>
 #include <variaveis.h>
-#include <web_content.h>
 
 // prototipos de funções do rtos
 
-void xTask_WifiConfig(void *pvParameters);
-void xTask_ConnectionTest(void *pvParameters);
-void xTask_SendDataTo_Server(void *pvParameters);
-void xTask_ReciveDataBy_Server(void *pvParameters);
-void xTask_TankLevel(void *pvParameters);
 void xTask_StatusLed(void *pvParameters);
+void xTask_ControlDispenser(void *pvParameters);
+
+void xTask_SelectComunicationMode(void *pvParameters);
+void xTask_ComunicationModeMaster(void *pvParameters);
+void xTask_CommunicationModeSlave(void *pvParameters);
 void xTask_ControlDispenser(void *pvParameters);
 
 // prototipos de funções comuns
 
 void Pin_InOutConfig();
 bool _WifiConnect();
-void handleScan();
-void handleRoot();
-void handleSave();
+CardRFID NFC_Check();
 
-// instancia memoria flash  esp32
-
-Preferences preferences;
-
-// instancia do server
-
-WebServer server;
+// intancia de libs
 
 Adafruit_PN532 nfc(PN532_SDA, PN532_SLC);
 
+myDebug debug(true);     // cria instancia para lib de debug serial
+Preferences prefs; // cria instancia para preferences
 
+WifiPortal MyPortalConfig(debug);     // cria instancia do portal, e repassa  instancia do debug compartilhada
+DispenserData MyDataDispenser(debug); // cria instancia dados SPIFFS, e repassa  instancia do debug compartilhada
 
+A041SK DetectorDeMaos(30, 100, S_DetectorPin);
+// RV1_Timer PotenciometroTemporizador(1000, 5000, S_TemporizadorPin);
 
+// structs do processo
+
+DispenserData::Registros _RegistrosTemp;
+DispenserData::ConfigReg _ConfigRegTemp;
 
 void setup()
-{  
+{
 
-  Serial.begin(115200);  
-  //esp_log_level_set("*", ESP_LOG_INFO); // inicializa log de informações do esp 32
- //esp_log_set_timestamp_source(ESP_LOG_TIMESTAMP_SOURCE_RTC);
-  ESP_LOGI(InitTag, "Iniciando o programa...");
-  Serial.println("Iniciando inicialização");
-  vTaskDelay(pdMS_TO_TICKS(10));
+  debug.begin(3, 115200); // Configura o nível de debug: 3 (INFO, WARN, ERROR)
+  debug.Println("SETUP", "==========================", "WARN");
+  debug.Println("SETUP", "Inicializando Dispenser IOT Elroi Medicial", "WARN");
+  Pin_InOutConfig(); // chama função de inicializa pinos
+  debug.Println("SETUP", "Verificação de metodo de comunicacao", "WARN");
+  // false = read/write // abre namespace da preferences  
+  //prefs.begin("WifiParameters", false);
+  //bool WifiConfigured = prefs.getBool("configured");
+  //bool DispenserMode = prefs.getBool("mode");   
+  //prefs.end();  
+ // debug.Print("SETUP", "Portal foi configurado ? ", "WARN");
+  //debug.Println("SETUP", WifiConfigured ? "SIM" : "NAO", "WARN");
 
-   
-  Serial.println("Configuração de pinos start");  
-  Pin_InOutConfig();// chama função de inicializa pinos 
-
-  
-  Serial.println("Verificando se os dados do server foi configurado");
-  
-  preferences.begin("Parameters", false); // false = read/write // abre namespace da preferences
-  bool WifiConfigured = preferences.getBool("Configured"); //
-  preferences.end();
-
-  Serial.print("Portal foi configurado? : ");
-  Serial.println(WifiConfigured ? "true" : "false");
-  // Se o portal nao foi configurado ele inicia em modo ap
-  //  verifica se dip switch bit 0 esta em false
-  Serial.print("DipSwitch Bit0 OFF ? ");
-  Serial.println(digitalRead(DipSwitch_Bit0) ? "true" : "false");
-
+  bool WifiConfigured = false;
+  bool DispenserMode = false;
+  // inicialização de eventgroup /  tarefa de status rtos
   xEventGroupStatusHandle = xEventGroupCreate(); // inicia eventgroup do status do led
+  xTaskCreatePinnedToCore(xTask_StatusLed, "TASK10", configMINIMAL_STACK_SIZE, NULL, 2, &xTask_StatusLedHandle, PRO_CPU_NUM);
+  debug.Print("SETUP", "Requisicao de configuracao de portao via pinos ? ", "WARN");
+  bool DipSwitch_Bit0_value = digitalRead(DipSwitch_Bit0);
+  delay(250);
+  debug.Println("SETUP", DipSwitch_Bit0_value ? "SIM" : "NAO", "WARN");
 
-  // faz a verificação se o portal ja foi configurado, ou se existe solicitação via pinos
-  if (!WifiConfigured || !digitalRead(DipSwitch_Bit0))
+  // Dispenser em modo de configuração do portal
+  if (!WifiConfigured || DipSwitch_Bit0_value)
   {
-
-    Serial.println("Dispenser nao foi configurado, iniciando AP mode");
+    // se entrou aqui, é porque não existe configuração ou foi forçada pelos dipswitch
+    debug.Println("SETUP", "Inicializando tarefa de selecao de modo de comunicacao", "WARN");
     // faz demonstração visual que o portal nao foi configurado
     xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM1Hz);
     vTaskDelay(pdMS_TO_TICKS(500));
     xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM_VD1Hz);
     vTaskDelay(pdMS_TO_TICKS(500));
     xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVD1Hz);
-
-    WiFi.softAP("ConfigPortal");
-    server.on("/", handleRoot);
-    server.on("/save", handleSave);
-    server.on("/scan", handleScan);
-    server.begin();
-
-    xTaskCreate(xTask_WifiConfig, "TASK0", configMINIMAL_STACK_SIZE + 4096, NULL, 1, &xTask_WifiConfigHandle);
+    // repassa instancia de preferences para dentro da função
+    MyPortalConfig.setPreferences(prefs);
+    // solicita inicio de configuração em modo ap
+    MyPortalConfig.ApMode();
+    xTaskCreatePinnedToCore(xTask_SelectComunicationMode, "TASK0", 4096, NULL, 1, &xTask_SelectComunicationModeHandle, APP_CPU_NUM);
   }
-  // se o portal já esta configurado ele inicia o processo
+  // Dispenser já configurado, escolhe modo de operação
   else
   {
-    xTaskCreatePinnedToCore(xTask_ConnectionTest, "TASK11", configMINIMAL_STACK_SIZE + 4096, NULL, 1, &xTask_PingTestHandle, APP_CPU_NUM);
+
+    // verifica metodo de comunicação true = slave  // false = master
+    if (DispenserMode) // slave mode
+    {
+      debug.Println("SETUP", "Inicializando Dispenser em modo Slave", "WARN");
+      xTaskCreatePinnedToCore(xTask_CommunicationModeSlave, "TASK1", 4096, NULL, 1, &xTask_CommunicationModeSlaveHandle, APP_CPU_NUM);
+    }
+    else // master mode
+    {
+      debug.Println("SETUP", "Inicializando Dispenser em modo Master", "WARN");
+      bool StatusWifiConnect = _WifiConnect();
+      if (StatusWifiConnect)
+      {
+        xTaskCreatePinnedToCore(xTask_ComunicationModeMaster, "TASK2", 4096, NULL, 1, &xTask_ComunicationModeMasterHandle, APP_CPU_NUM);
+      }
+      else
+      {
+        debug.Println("SETUP", "Não foi possivel se conectar no wifi", "ERROR");
+        delay(3000);
+        ESP.restart();
+        // TODO :  se não conectar wifi o que fazer ?????
+      }
+    }
   }
 
-  xTaskCreatePinnedToCore(xTask_StatusLed, "TASK10", configMINIMAL_STACK_SIZE, NULL, 1, &xTask_StatusLedHandle, APP_CPU_NUM);
+  debug.Println("SETUP", "Inicializando MydataDispenserFunction", "WARN");
+
+  // inicializa dados do dispenser
+  MyDataDispenser.begin();
+  // verifica dipswitch para reinicio de memoria flash esp
+  // debug.Println("SETUP", "Requisicao restauracao memoria flash DIPSWITCH1 ? ", "WARN");
+  // debug.Println("SETUP", digitalRead(!DipSwitch_Bit1) ? "SIM" : "NAO", "WARN");
+  /*
+  if(!DipSwitch_Bit1){
+    MyDataDispenser.ClearAll();
+  }
+  */
+  delay(500);
+
+  //
 
   nfc.begin();
 
@@ -109,97 +139,36 @@ void setup()
   Serial.print((versiondata >> 16) & 0xFF, DEC);
   Serial.print('.');
   Serial.println((versiondata >> 8) & 0xFF, DEC);
+
+  xTaskCreatePinnedToCore(xTask_ControlDispenser, "TASK20", 4096, NULL, 1, &xTask_ControlDispenserHandle, tskNO_AFFINITY);
 };
 
 void loop()
 {
-
-  uint8_t success;
-  uint8_t uid[] = { 0, 0, 0, 0, 0, 0, 0 };  // Buffer to store the returned UID
-  uint8_t uidLength;                        // Length of the UID (4 or 7 bytes depending on ISO14443A card type)
-
-  // Wait for an ISO14443A type cards (Mifare, etc.).  When one is found
-  // 'uid' will be populated with the UID, and uidLength will indicate
-  // if the uid is 4 bytes (Mifare Classic) or 7 bytes (Mifare Ultralight)
-  success = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, uid, &uidLength);
-
-  if (success) {
-    // Display some basic information about the card
-    Serial.println("Found an ISO14443A card");
-    Serial.print("  UID Length: ");Serial.print(uidLength, DEC);Serial.println(" bytes");
-    Serial.print("  UID Value: ");
-    nfc.PrintHex(uid, uidLength);
-    Serial.println("");
-
-    if (uidLength == 4)
-    {
-      // We probably have a Mifare Classic card ...
-      Serial.println("Seems to be a Mifare Classic card (4 byte UID)");
-
-      // Now we need to try to authenticate it for read/write access
-      // Try with the factory default KeyA: 0xFF 0xFF 0xFF 0xFF 0xFF 0xFF
-      Serial.println("Trying to authenticate block 4 with default KEYA value");
-      uint8_t keya[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-
-	  // Start with block 4 (the first block of sector 1) since sector 0
-	  // contains the manufacturer data and it's probably better just
-	  // to leave it alone unless you know what you're doing
-      success = nfc.mifareclassic_AuthenticateBlock(uid, uidLength, 4, 0, keya);
-
-      if (success)
-      {
-        Serial.println("Sector 1 (Blocks 4..7) has been authenticated");
-        uint8_t data[16];
-
-        // If you want to write something to block 4 to test with, uncomment
-		// the following line and this text should be read back in a minute
-        memcpy(data, (const uint8_t[]){ 'a', 'd', 'a', 'f', 'r', 'u', 'i', 't', '.', 'c', 'o', 'm', 0, 0, 0, 0 }, sizeof data);
-         success = nfc.mifareclassic_WriteDataBlock (4, data);
-
-        // Try to read the contents of block 4
-        success = nfc.mifareclassic_ReadDataBlock(4, data);
-
-        if (success)
-        {
-          // Data seems to have been read ... spit it out
-          Serial.println("Reading Block 1:");
-          nfc.PrintHexChar(data, 16);
-          Serial.println("");
-
-          // Wait a bit before reading the card again
-          delay(1000);
-        }
-        else
-        {
-          Serial.println("Ooops ... unable to read the requested block.  Try another key?");
-        }
-      }
-      else
-      {
-        Serial.println("Ooops ... authentication failed: Try another key?");
-      }
-    }
-
-    
-  }
-    vTaskDelay(pdMS_TO_TICKS(2000));
-    // vTaskDelete(NULL);
-  
+  vTaskDelete(NULL);
 };
 
 /*----------------------------------TAREFAS RTOS----------------------------------------- */
 
 // TAREFA DE MODO DE CONGIGURAÇÃO EM MODO AP
-  void xTask_WifiConfig(void *pvParameters)
+void xTask_SelectComunicationMode(void *pvParameters)
+{
+  unsigned long lastTime = 0;
+  const unsigned long interval = 2000; // tempo de demostração de portal ativo led
+  while (pdTRUE)
   {
+    bool ConfigDone = MyPortalConfig.HandleClient();
 
-    unsigned long lastTime = 0;
-    const unsigned long interval = 2000; // Chama a cada 50ms
-
-    while (pdTRUE)
+    // verifica que se a configuração do portal já foi feita.
+    if (ConfigDone)
     {
-
-      server.handleClient();
+      xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OffLedVM_VD);
+      delay(3000);
+      ESP.restart();
+    }
+    // enquanto portal nao foi configurado sinaliza o led
+    else
+    {
       // demostra que o portal esta ativo
       unsigned long currentTime = millis();
       if (currentTime - lastTime >= interval)
@@ -207,169 +176,168 @@ void loop()
         lastTime = currentTime;
         xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM_VD1Hz);
       }
-
-      vTaskDelay(pdMS_TO_TICKS(25));
     }
-  };
-// TAFERA DE STATUS DO LED DA PLACA
-  void xTask_StatusLed(void *pvParameters)
+
+    vTaskDelay(pdMS_TO_TICKS(25));
+  }
+};
+
+void xTask_ComunicationModeMaster(void *pvParameters)
+{
+  vTaskDelete(xTask_CommunicationModeSlaveHandle);
+  while (pdTRUE)
   {
+    vTaskDelay(5000);
+  }
+};
 
-    EventBits_t xEventBits;
-    while (pdTRUE)
-    {
+void xTask_CommunicationModeSlave(void *pvParameters)
+{
+  vTaskDelay(5000);
+  vTaskDelete(xTask_ComunicationModeMasterHandle);
+};
+// TAREFA DE CONTROLE DO DISPENSER
+void xTask_ControlDispenser(void *pvParameters)
+{
+  unsigned long lastTime = 0;
+  const unsigned long interval_rfid = 1000;
+  const unsigned long interval_timeout = 10000;
+  unsigned long interval_Bomba = 0;
 
-      xEventBits = xEventGroupWaitBits(
-          xEventGroupStatusHandle, // O Event Group onde estamos aguardando
-          0xFF,                    // Espera pelos bits de 0 a 7
-          pdTRUE,                  // limpa bits ao sair
-          pdFALSE,                 // espera por qualquer bit
-          portMAX_DELAY            // Aguarda indefinidamente até que todos os bits sejam ativados
-      );
-      // clock led vm 1hz
-      if ((xEventBits & xEvG_ClockLedVM1Hz) != 0)
-      { // Ação para o BIT_0
-        analogWrite(LedVMPin, 255);
-        vTaskDelay(pdMS_TO_TICKS(500));
-        analogWrite(LedVMPin, 0);
-      }
-      // clock led vd 1hz
-      if ((xEventBits & xEvG_ClockLedVD1Hz) != 0)
-      { // Ação para o BIT_1
-        analogWrite(LedVDPin, 255);
-        vTaskDelay(pdMS_TO_TICKS(500));
-        analogWrite(LedVDPin, 0);
-      }
-      // clock led vd e led vm 1hz
-      if ((xEventBits & xEvG_ClockLedVM_VD1Hz) != 0)
-      { // Ação para o BIT_2
-        analogWrite(LedVMPin, 31);
-        analogWrite(LedVDPin, 255);
-        vTaskDelay(pdMS_TO_TICKS(500));
-        analogWrite(LedVMPin, 0);
-        analogWrite(LedVDPin, 0);
-      }
-      // liga led vermelho indicação de falha de hardware
-      if ((xEventBits & xEvG_OnLedVM) != 0)
-      { // Ação para o BIT_3
-        analogWrite(LedVMPin, 255);
-        vTaskDelay(pdMS_TO_TICKS(10));
-      }
-      // liga led vermelho e verde indicação de falta de comunicação
-      if ((xEventBits & xEvG_OnLedVM_VD) != 0)
-      { // Ação para o BIT_4
-        analogWrite(LedVMPin, 3);
-        analogWrite(LedVDPin, 255);
-        vTaskDelay(pdMS_TO_TICKS(10));
-      }
-      // deliga leds
-      if ((xEventBits & xEvG_OffLedVM_VD) != 0)
-      { // Ação para o BIT_5
-        analogWrite(LedVMPin, 0);
-        analogWrite(LedVDPin, 0);
-        vTaskDelay(pdMS_TO_TICKS(10));
-      } 
-      // liga led led da pcb da placa    
-      if ((xEventBits & xEvG_OnLedEsp32) != 0) {  // Ação para o BIT_6
-          digitalWrite(LedESP32,HIGH);
-      }
-      // ledliga led da pcb da placa
-      if ((xEventBits & xEvG_OffLedEsp32) != 0) {  // Ação para o BIT_7
-          digitalWrite(LedESP32,LOW);
-      }
-      
+  bool _Value = false, _LastValue, LigaBomba;
+  uint16_t _ValueTemporizador = 0;
 
-      vTaskDelay(pdMS_TO_TICKS(20));
-    }
-  };
-// TAREFA DE VERIFICAÇÃO DE CONEXÃO COM SERVIDOR ELROI
-  void xTask_ConnectionTest(void *pvParameters)
+  while (pdTRUE)
   {
-    while (pdTRUE)
+    unsigned long currentTime = millis();
+    if (currentTime - lastTime >= interval_rfid)
     {
-      xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVD1Hz);
-
-      vTaskDelay(pdMS_TO_TICKS(2000));
-    }
-  };
-
-
-
-/*---------------------------------------------------------------------------------------- */
-
-
-/*-----------------------------------funções do projeto----------------------------------- */
- 
-/*---------------------------funções modo de congiguração modo AP------------------------- */
-  void handleRoot()
-  {
-    String html = htmlPage; // A página inteira já está em htmlPage
-
-    // Escaneia redes Wi-Fi e substitui a mensagem padrão
-    int n = WiFi.scanNetworks();
-    String options;
-    if (n == 0)
-    {
-      options = "<option value=''>Nenhuma rede encontrada</option>";
-    }
-    else
-    {
-      for (int i = 0; i < n; i++)
+      CardRFID checkCard = NFC_Check();
+      if (checkCard.succes)
       {
-        options += "<option value='" + String(WiFi.SSID(i)) + "'>" +
-                   String(WiFi.SSID(i)) + " (Sinal: " +
-                   String(WiFi.RSSI(i)) + " dBm)</option>";
+        vTaskDelay(pdMS_TO_TICKS(250));
+        xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVD1Hz);
+        // apos a detecção do cartão ele deve esperar pela inteação das mão do usuario até o timeout
+        bool EsperaPelasMaos = true;
+        unsigned long InitTime_EsperaPelasMaos = millis();
+        while (EsperaPelasMaos)
+        {
+
+          // enquanto o tempo for menor que o timeout espera pelas mãos
+          if (millis() <= (InitTime_EsperaPelasMaos + interval_timeout))
+          {
+            _Value = DetectorDeMaos.Read();
+            if (!LigaBomba)
+            {
+              if (_Value)
+              {
+                Serial.println("Mãos Detectadas");
+                LigaBomba = true;
+
+                interval_Bomba = millis() + 2000;
+              }
+            }
+
+            while (LigaBomba)
+            {
+              if (millis() > interval_Bomba)
+              {
+                LigaBomba = false;
+                digitalWrite(BombaPin, LOW);
+                xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OffLedVM_VD);
+              }
+              else
+              {
+                digitalWrite(BombaPin, HIGH);
+                xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OnLedVM_VD);
+              }
+            }
+          }
+          else
+          {
+            xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM1Hz);
+            EsperaPelasMaos = false;
+          }
+        }
+
+        lastTime = millis();
       }
+
+      vTaskDelay(10); // Pequeno atraso para evitar consumir CPU desnecessariamente
+    }
+  }
+}; // TAFERA DE STATUS DO LED DA PLACA
+void xTask_StatusLed(void *pvParameters)
+{
+
+  EventBits_t xEventBits;
+  while (pdTRUE)
+  {
+
+    xEventBits = xEventGroupWaitBits(
+        xEventGroupStatusHandle, // O Event Group onde estamos aguardando
+        0xFF,                    // Espera pelos bits de 0 a 7
+        pdTRUE,                  // limpa bits ao sair
+        pdFALSE,                 // espera por qualquer bit
+        portMAX_DELAY            // Aguarda indefinidamente até que todos os bits sejam ativados
+    );
+    // clock led vm 1hz
+    if ((xEventBits & xEvG_ClockLedVM1Hz) != 0)
+    { // Ação para o BIT_0
+      analogWrite(LedVMPin, 255);
+      vTaskDelay(pdMS_TO_TICKS(500));
+      analogWrite(LedVMPin, 0);
+    }
+    // clock led vd 1hz
+    if ((xEventBits & xEvG_ClockLedVD1Hz) != 0)
+    { // Ação para o BIT_1
+      analogWrite(LedVDPin, 255);
+      vTaskDelay(pdMS_TO_TICKS(500));
+      analogWrite(LedVDPin, 0);
+    }
+    // clock led vd e led vm 1hz
+    if ((xEventBits & xEvG_ClockLedVM_VD1Hz) != 0)
+    { // Ação para o BIT_2
+      analogWrite(LedVMPin, 31);
+      analogWrite(LedVDPin, 255);
+      vTaskDelay(pdMS_TO_TICKS(500));
+      analogWrite(LedVMPin, 0);
+      analogWrite(LedVDPin, 0);
+    }
+    // liga led vermelho indicação de falha de hardware
+    if ((xEventBits & xEvG_OnLedVM) != 0)
+    { // Ação para o BIT_3
+      analogWrite(LedVMPin, 255);
+      vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    // liga led vermelho e verde indicação de falta de comunicação
+    if ((xEventBits & xEvG_OnLedVM_VD) != 0)
+    { // Ação para o BIT_4
+      analogWrite(LedVMPin, 3);
+      analogWrite(LedVDPin, 255);
+      vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    // deliga leds
+    if ((xEventBits & xEvG_OffLedVM_VD) != 0)
+    { // Ação para o BIT_5
+      analogWrite(LedVMPin, 0);
+      analogWrite(LedVDPin, 0);
+      vTaskDelay(pdMS_TO_TICKS(10));
+    }
+    // liga led led da pcb da placa
+    if ((xEventBits & xEvG_OnLedEsp32) != 0)
+    { // Ação para o BIT_6
+      digitalWrite(LedESP32, HIGH);
+    }
+    // ledliga led da pcb da placa
+    if ((xEventBits & xEvG_OffLedEsp32) != 0)
+    { // Ação para o BIT_7
+      digitalWrite(LedESP32, LOW);
     }
 
-    // Substitui o placeholder no HTML com a lista de redes
-    html.replace("<option value=''>Nenhuma rede encontrada</option>", options);
-
-    // Envia a resposta ao cliente
-    server.send(200, "text/html", html);
+    vTaskDelay(pdMS_TO_TICKS(20));
   }
-  void handleScan()
-  {
-    int n = WiFi.scanNetworks();
-    String json = "{\"networks\":[";
-    for (int i = 0; i < n; i++)
-    {
-      if (i > 0)
-        json += ",";
-      json += "{\"ssid\":\"" + String(WiFi.SSID(i)) + "\",\"signal\":\"" + String(WiFi.RSSI(i)) + "\"}";
-    }
-    json += "]}";
-
-    server.send(200, "application/json", json);
-  }
-  void handleSave()
-  {
-    String ssid = server.arg("ssid");
-    String password = server.arg("password");
-    String porta = server.arg("porta");
-    String hwid = server.arg("hwid");
-
-    Serial.println("Salvando dados recebidos do portal : ");
-    Serial.println("SSID: " + ssid);
-    Serial.println("password : " + password);
-    Serial.println("porta : " + porta);
-    Serial.println("hwid : " + hwid);
-    Serial.println("Portal Configured : " + true);
-
-    preferences.begin("Parameters", false); // false = read/write
-    preferences.putBool("Configured", true);
-    preferences.putString("ssid", ssid);
-    preferences.putString("password", password);
-    preferences.putString("porta", porta);
-    preferences.putString("hwid", hwid);
-    preferences.end();
-
-    server.send(200, "text/html; charset=UTF-8", "<html><body><h2>Configurações Salvas!</h2></body></html>");
-    Serial.println("Deletando task e reiniciando esp");
-    xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OnLedVM);
-    vTaskDelete(xTask_WifiConfigHandle);
-  }
-/*---------------------------------------------------------------------------------------- */
+};
 
 /*--------------------------------------funções gerais-------------------------------------*/
 
@@ -379,100 +347,97 @@ void Pin_InOutConfig()
 
   pinMode(DipSwitch_Bit0, INPUT_PULLUP);
   pinMode(DipSwitch_Bit1, INPUT_PULLUP);
-
-  pinMode(LedESP32,OUTPUT);
-
+  pinMode(LedESP32, OUTPUT);
+  pinMode(BombaPin, OUTPUT);
+  pinMode(LedVDPin, OUTPUT);
+  vTaskDelay(pdMS_TO_TICKS(50));
+  digitalWrite(LedVDPin, LOW);
+  digitalWrite(BombaPin, LOW);
   vTaskDelay(pdMS_TO_TICKS(100));
-
-  Serial.println("Configuracao de pinos inicializada");
 }
 // configuração e conecção no wifi
-bool _WifiConnect(){
+bool _WifiConnect()
+{
+  String ssid = "";
+  String password = "";
+  // false = read/write // abre namespace da preferences
+  prefs.begin("WifiParameters", false);
+  prefs.getString("ssid", ssid);
+  prefs.getString("password", password);
+  prefs.end();
+  debug.Println("_WifiConnect()", "Dados Preferences", "WARN");
+  debug.Println("_WifiConnect()", "SSID : " + ssid + " PASSWORD :" + password, "WARN");
+  // aguarda intervalo  caso passou, retorna false de  pois nao conseguiu se conectar no wifi
+  if (ssid != "" && password != "")
+  {
 
+    WiFi.begin(ssid, password);
+    debug.Println("_WifiConnect()", "Iniciando comunicacao WIFI", "WARN");
+    
+    const unsigned long WifiInterval = 15000 + millis(); // Tempo que espera o para fazer conexçao com wifi
+    while (WiFi.status() != WL_CONNECTED)
+    {
+      // aguarda tempo imputado, caso nao se conectou retorna false
 
-return true;
+      if (millis() >= WifiInterval)
+      {
+        return false;
+      }
+      // enquanto passa o tempo printa dados a cada 1000ms
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM1Hz);
+      Serial.print(".");
+    }
+    debug.Println("_WifiConnect()", "Wi-Fi conectado", "WARN");
+    debug.Println("_WifiConnect()", "Endereco de IP : " + WiFi.localIP(), "WARN");
+
+    return true;
+  }
+  else
+  {
+    debug.Println("_WifiConnect()", "SSID ou PASSWORD invalidos, reiniciando dados de congiguração do poeral", "ERROR");
+    prefs.begin("WifiParameters", false);
+    prefs.putBool("configured", false);
+    prefs.end();
+    return false;
+  }
 }
+// função que le os dados do cartão
+CardRFID NFC_Check()
+{
+  CardRFID _card;
+  memset(&_card, 0, sizeof(CardRFID)); // Preenche todos os bytes do objeto com 0
+  // chama função que le o cartão e aguarda retorno
+  _card.succes = nfc.readPassiveTargetID(PN532_MIFARE_ISO14443A, _card.uid_uint8_t, &_card.uidlength);
+  // verifica se cartão foi aproximado
+  if (_card.succes)
+  {
+    // verifica se o modelo do cartão é de 4 bytes
+    if (_card.uidlength == 4)
+    {
+      debug.Println("NFC_Check()", "Cartao detectado ", "INFO");
+      debug.Println("NFC_Check()", "UID Length : " + String(_card.uidlength) + " bytes", "INFO");
+      // faz o shift rollate para transformar os bytes em uma variavel inteiro 32bits
+      _card.uid_uint32_t = (_card.uid_uint8_t[0] << 24) |
+                           (_card.uid_uint8_t[1] << 16) |
+                           (_card.uid_uint8_t[2] << 8) |
+                           _card.uid_uint8_t[3];
+      debug.Println("NFC_Check()", "UID Value: " + String(_card.uid_uint32_t), "INFO");
+    }
+    else
+    {
+      debug.Println("NFC_Check()", "Modelo de cartao nao suportado", "INFO");
+      memset(&_card, 0, sizeof(CardRFID)); // Preenche todos os bytes do objeto com 0
+    }
+  }
 
-
-
-
-
+  return _card;
+}
 
 /*---------------------------------------------------------------------------------------- */
 
-  // programa antigo
-  /*
-  #include "web_content.h"  // Inclua o cabeçalho aqui
-
-  WebServer server;
-  Preferences preferences;
-
-  void handleRoot();
-  void handleSave();
-
-
-  void setup() {
-      Serial.begin(115200);
-      WiFi.softAP("ConfigPortal");
-      server.on("/", handleRoot);
-      server.on("/save", handleSave);
-      server.begin();
-      Serial.println("Servidor iniciado");
-  }
-
-  void loop() {
-      server.handleClient();
-  }
-
-  void handleRoot() {
-      String html = htmlPage;  // Comece com a parte inicial do HTML
-
-      int n = WiFi.scanNetworks();
-      if (n == 0) {
-          html += "<option value=''>Nenhuma rede encontrada</option>";
-      } else {
-          for (int i = 0; i < n; i++) {
-              html += "<option value='" + String(WiFi.SSID(i)) + "'>" + String(WiFi.SSID(i)) + " (Sinal: " + String(WiFi.RSSI(i)) + " dBm)</option>";
-          }
-      }
-
-      html += htmlEnd;  // Adicione a parte final do HTML
-
-      server.send(200, "text/html", html);
-  }
-
-  void handleSave() {
-      String ssid = server.arg("ssid");
-      String password = server.arg("password");
-      String porta = server.arg("porta");
-      String hwid = server.arg("hwid");
-
-      preferences.begin("wifi", false);
-      preferences.putString("ssid", ssid);
-      preferences.putString("password", password);
-      preferences.putString("porta", porta);
-      preferences.putString("hwid", hwid);
-      preferences.end();
-
-      server.send(200, "text/html", "<html><body><h2>Configurações Salvas!</h2></body></html>");
-  }
-
-
-
-
-
-  void setup() {
-
-
-
-    pinMode(BombaPin,OUTPUT);
-    pinMode(LedVDPin,OUTPUT);
-    digitalWrite(LedVDPin,HIGH);
-    Serial.begin(115200);
-    vTaskDelay(100);
-    Serial.println("Iniciando Programa");
-    digitalWrite(LedVDPin,LOW);
-    digitalWrite(BombaPin,LOW);
+// programa antigo
+/*
 
 
 
@@ -480,102 +445,99 @@ return true;
 
 
 
-  }
+void loop() {
+
+  bool _Value = false, _LastValue;
+  uint16_t _ValueTemporizador = 0;
 
 
-  void loop() {
-
-    bool _Value = false, _LastValue;
-    uint16_t _ValueTemporizador = 0;
-
-
-  }
+}
 
 
 
-  */
+*/
 
-  //--------------------------------------------------------------------------------------//
-  // função de leitura de habilitação da bomba
-  /*
-    //Serial.println("Inicia Leitura de A041SK");
-    _Value =  DetectorDeMaos.Read();
-     if(!LigaBomba){
-        if(_Value){
-          Serial.println("Mãos Detectadas");
-          LigaBomba = true;
-          GetMillis = millis();
-          EndMillis = GetMillis + PotenciometroTemporizador.ReadTimer();
-           Serial.print("Temporizador Inicial : ");
-           Serial.println(GetMillis);
-           Serial.print("Temporizador Final : ");
-           Serial.println(EndMillis);
-        }
-      }
-
-    if (LigaBomba){
-      vTaskDelay(50);
-      if (millis() > EndMillis )
-      {
-        LigaBomba = false;
-        digitalWrite(Bomba_Pin,LOW);
-        digitalWrite(LedVD_Pin,LOW);
-        Serial.println("Ciclo Bomba Finalizado");
-      }else{
-        digitalWrite(Bomba_Pin,HIGH);
-        digitalWrite(LedVD_Pin,LOW);
+//--------------------------------------------------------------------------------------//
+// função de leitura de habilitação da bomba
+/*
+  //Serial.println("Inicia Leitura de A041SK");
+  _Value =  DetectorDeMaos.Read();
+   if(!LigaBomba){
+      if(_Value){
+        Serial.println("Mãos Detectadas");
+        LigaBomba = true;
+        GetMillis = millis();
+        EndMillis = GetMillis + PotenciometroTemporizador.ReadTimer();
+         Serial.print("Temporizador Inicial : ");
+         Serial.println(GetMillis);
+         Serial.print("Temporizador Final : ");
+         Serial.println(EndMillis);
       }
     }
-  */
 
-  //--------------------------------------------------------------------------------------//
+  if (LigaBomba){
+    vTaskDelay(50);
+    if (millis() > EndMillis )
+    {
+      LigaBomba = false;
+      digitalWrite(Bomba_Pin,LOW);
+      digitalWrite(LedVD_Pin,LOW);
+      Serial.println("Ciclo Bomba Finalizado");
+    }else{
+      digitalWrite(Bomba_Pin,HIGH);
+      digitalWrite(LedVD_Pin,LOW);
+    }
+  }
+*/
 
-  // função de leitura do sensor A0221AU
-  /*
-  declaração de variaveis e instancia
-  HardwareSerial A0221AU_Serial(1);
-  #define A0221AU_RX_Pin  33
-  #define A0221AU_TX_Pin  32
-  unsigned char data[4]={};
-  float distance
-  */
+//--------------------------------------------------------------------------------------//
 
-  /*
-  // inicia serial de comunicação com sensor
-  A0221AU_Serial.begin(9600,SERIAL_8N1,A0221AU_RX_Pin,A0221AU_TX_Pin);
-  */
+// função de leitura do sensor A0221AU
+/*
+declaração de variaveis e instancia
+HardwareSerial A0221AU_Serial(1);
+#define A0221AU_RX_Pin  33
+#define A0221AU_TX_Pin  32
+unsigned char data[4]={};
+float distance
+*/
 
-  /*// Verifica se há dados disponíveis no buffer serial
-    if (A0221AU_Serial.available()) {
-      // Aguarda até encontrar o cabeçalho 0xFF
-      if (A0221AU_Serial.read() == 0xFF) {
-        uint8_t data[4];
-        data[0] = 0xFF;  // Cabeçalho já lido
+/*
+// inicia serial de comunicação com sensor
+A0221AU_Serial.begin(9600,SERIAL_8N1,A0221AU_RX_Pin,A0221AU_TX_Pin);
+*/
 
-        // Lê os próximos 3 bytes
-        for (int i = 1; i < 4; i++) {
-          while (!A0221AU_Serial.available()); // Aguarda até o dado estar disponível
-          data[i] = A0221AU_Serial.read();
-        }
-        A0221AU_Serial.flush();
-        // Calcula a soma
-        uint8_t sum = (data[0] + data[1] + data[2]) & 0x00FF;
+/*// Verifica se há dados disponíveis no buffer serial
+  if (A0221AU_Serial.available()) {
+    // Aguarda até encontrar o cabeçalho 0xFF
+    if (A0221AU_Serial.read() == 0xFF) {
+      uint8_t data[4];
+      data[0] = 0xFF;  // Cabeçalho já lido
 
-        // Verifica se a soma está correta
-        if (sum == data[3]) {
-          int distance = (data[1] << 8) + data[2];
-          if (distance > 30) {
-            Serial.print("Distance = ");
-            Serial.print(distance / 10);
-            Serial.println(" cm");
-          } else {
-            Serial.println("Below the lower limit");
-          }
+      // Lê os próximos 3 bytes
+      for (int i = 1; i < 4; i++) {
+        while (!A0221AU_Serial.available()); // Aguarda até o dado estar disponível
+        data[i] = A0221AU_Serial.read();
+      }
+      A0221AU_Serial.flush();
+      // Calcula a soma
+      uint8_t sum = (data[0] + data[1] + data[2]) & 0x00FF;
+
+      // Verifica se a soma está correta
+      if (sum == data[3]) {
+        int distance = (data[1] << 8) + data[2];
+        if (distance > 30) {
+          Serial.print("Distance = ");
+          Serial.print(distance / 10);
+          Serial.println(" cm");
         } else {
-          Serial.println("ERROR: Checksum mismatch");
+          Serial.println("Below the lower limit");
         }
+      } else {
+        Serial.println("ERROR: Checksum mismatch");
       }
     }
-    // Aguarda antes de verificar novamente
-    vTaskDelay(100);
-  */
+  }
+  // Aguarda antes de verificar novamente
+  vTaskDelay(100);
+*/
