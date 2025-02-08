@@ -3,15 +3,11 @@
 
 /*LIB ARDUINO*/
 #include <Arduino.h>
-
+#include <WiFi.h>
 #include <hardwareserial.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
 #include <time.h>
-
-#include<WifiPortal.h> // lib dedicada ao portal de configurações.
-
-
-/*LIB SALVAR ESCALA DE MEDICAO*/
-#include <Preferences.h> // flash memory in esp32 better than EEPROM
 
 /*LIB DE GERENCIADO FREERTOS*/
 #include "freertos/FreeRTOS.h"
@@ -20,26 +16,21 @@
 #include "freertos/event_groups.h"
 #include <esp_task_wdt.h>
 
+// LIB DO PN532
+
+#include <Adafruit_PN532.h>
+#include <Wire.h>
+
+// BIBLIOTECAS ESPECIFICAS
+
+#include <DispenserData.h>
+#include <myDebug.h>
+#include <WifiPortal.h> // lib dedicada ao portal de configurações.
 
 /*LIB DE AUXILIARES*/
 
 #include <0A41SK.h>
 #include <RV1_Timer.h>
-
-// LIB DO PN532
-
-//Biblioteca -----------------------------------------------------------------------------------------
-
-#include <Adafruit_PN532.h>
-#include <Wire.h>
-
-// lib de dados do dispenser
-
-#include <DispenserData.h>
-
-#include <myDebug.h>
-
-
 
 /*
 

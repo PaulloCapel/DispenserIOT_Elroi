@@ -45,11 +45,11 @@ void DispenserData::begin()
 bool DispenserData::inicializaArquivos()
 {
     // Inicializa ConfigReg
-    bool InitSPIFFS = SPIFFS.exists(_filenameConfig);
-    debug.Print("DispenserData.Begin()", "Arquivo de configuracao existe ? ", "INFO");
-    debug.Println("DispenserData.Begin()", InitSPIFFS ? "true" : "false", "INFO");
+    bool ConfigRegExist = SPIFFS.exists(_filenameConfig);
+    debug.Print("DispenserData.Begin()", "Arquivo /RegistroConfig.bin existe ? ", "INFO");
+    debug.Println("DispenserData.Begin()", ConfigRegExist ? "true" : "false", "INFO");
 
-    if (!InitSPIFFS)
+    if (!ConfigRegExist)
     {
 
         ConfigReg config = {0, 0, 0, true, false}; // inicializa arquivo de configuração
@@ -62,7 +62,7 @@ bool DispenserData::inicializaArquivos()
         }
         else
         {
-            debug.Println("DispenserData.Begin()", "Erro ao abrir arquivo, ou arquivo corrompido", "WARN");
+            debug.Println("DispenserData.Begin()", "Erro ao abrir /RegistroConfig.bin, ou arquivo corrompido", "WARN");
             return false;
         }
 
@@ -95,10 +95,34 @@ bool DispenserData::inicializaArquivos()
         debug.Println("DispenserData.Begin()", "==========================", "INFO");
     }
 
+    // verifica se o arquivo de configurações do wifi existe
+    bool WifiConfigExist = SPIFFS.exists(_filenameWifiData);
+    debug.Print("DispenserData.Begin()", "Arquivo /WifiDataDisp.bin existe ? ", "INFO");
+    debug.Println("DispenserData.Begin()", WifiConfigExist ? "true" : "false", "INFO");
+    if (!WifiConfigExist)
+    {
+        WifiDataDisp _WifiDataDisp;
+        memset(&_WifiDataDisp, 0, sizeof(WifiDataDisp));
+        _WifiDataDisp.Mode = 0; // inicializa em 0 demonstrando que o portal não foi configurado
+
+        File _WifiDataDispFile = SPIFFS.open(_filenameWifiData, FILE_WRITE);
+        if (_WifiDataDispFile)
+        {
+            _WifiDataDispFile.write(reinterpret_cast<const uint8_t *>(&_WifiDataDisp), sizeof(_WifiDataDisp));
+            _WifiDataDispFile.close();
+            debug.Println("DispenserData.Begin()", "Arquivo /WifiDataDisp.bin, criado com sucesso", "INFO");
+        }
+        else
+        {
+            debug.Println("DispenserData.Begin()", "Erro ao abrir /WifiDataDisp.bin, ou arquivo corrompido", "WARN");
+            return false;
+        }
+    }
+
     return true;
 }
 
-void DispenserData::AddNovosDados(uint8_t _hw_id[6], uint8_t _freepd, uint8_t _event, uint32_t _dataUser, uint32_t _timestamp)
+void DispenserData::Put_NovoRegistro(uint8_t _hw_id[6], uint8_t _freepd, uint8_t _event, uint32_t _dataUser, uint32_t _timestamp)
 {
     debug.Println("DispenserData.PutNovaPos()", "Adicionando novos dados na fila", "WARN");
     // Lê o arquivo de configuração para obter o índice atual
@@ -212,7 +236,7 @@ void DispenserData::AddNovosDados(uint8_t _hw_id[6], uint8_t _freepd, uint8_t _e
     debug.Print("DispenserData.PutNovaPos()", "Dados Adicionados com sucesso", "WARN");
 }
 
-DispenserData::Registros DispenserData::RetNovosDados()
+DispenserData::Registros DispenserData::Get_RegistroMaisAntigo()
 {
     debug.Println("DispenserData.GetPosAntiga()", "Retirando dados da fila", "WARN");
     // Variáveis temporárias
@@ -344,7 +368,7 @@ DispenserData::Registros DispenserData::RetNovosDados()
     }
 }
 
-DispenserData::ConfigReg DispenserData::VerificaBuffer()
+DispenserData::ConfigReg DispenserData::Read_ConfigBuffer()
 {
 
     ConfigReg config;
@@ -366,9 +390,9 @@ DispenserData::ConfigReg DispenserData::VerificaBuffer()
     }
 }
 
-bool DispenserData::ClearAll()
+bool DispenserData::Clear_Registros()
 {
-    debug.Println("DispenserData.ClearAll()", "Limpeza de arquivos ", "WARN");
+    debug.Println("DispenserData.Clear_Registros()", "Limpando /RegistroConfig.bin | /Registros.bin", "WARN");
     // Cria buffers zerados diretamente
     Registros *bufferZerado = new Registros[BUFFER_SIZE]; // Usando memória dinâmica
     // zera variaveis da alocação dinamica do buffer
@@ -380,7 +404,7 @@ bool DispenserData::ClearAll()
     File dataFile = SPIFFS.open(_filenameData, FILE_WRITE);
     if (!dataFile)
     {
-        debug.Println("DispenserData.ClearAll()", "Erro ao abrir /Registros.bin ", "WARN");
+        debug.Println("DispenserData.Clear_Registros()", "Erro ao abrir /Registros.bin ", "WARN");
         delete[] bufferZerado;
         return false;
     }
@@ -394,7 +418,7 @@ bool DispenserData::ClearAll()
     File configFile = SPIFFS.open(_filenameConfig, FILE_WRITE);
     if (!configFile)
     {
-        debug.Println("DispenserData.ClearAll()", "Erro ao abrir arquivo /RegistroConfig.bin ", "WARN");
+        debug.Println("DispenserData.Clear_Registros()", "Erro ao abrir arquivo /RegistroConfig.bin ", "WARN");
         delete[] bufferZerado;
         return false;
     }
@@ -404,7 +428,109 @@ bool DispenserData::ClearAll()
         configFile.close();
     }
 
-    debug.Println("DispenserData.ClearAll()", "Arquivos de limpos", "WARN");
+    debug.Println("DispenserData.Clear_Registros()", "Arquivos /RegistroConfig.bin | /Registros.bin  limpos", "WARN");
     delete[] bufferZerado;
     return true;
 }
+
+//---------------------------funções relacionadas a manipulação dos dados do wifi --------------------------//
+
+bool DispenserData::Clear_WifiConfig()
+{
+    // Registra um log indicando que o arquivo /WifiDataDisp.bin está sendo limpo
+    debug.Println("DispenserData.Clear_WifiConfig()", "Limpando arquivo /WifiDataDisp.bin ", "WARN");
+
+    // Cria uma estrutura para armazenar os dados lidos do arquivo, inicializada com zero
+    WifiDataDisp _WifiDataDisp = {};
+
+    // Tenta abrir o arquivo /WifiDataDisp.bin para escrita no SPIFFS
+    File _WifiDataDispFile = SPIFFS.open(_filenameWifiData, FILE_WRITE);
+
+    // Verifica se o arquivo foi aberto com sucesso
+    if (_WifiDataDispFile)
+    {
+        // Escreve a estrutura _WifiDataDisp no arquivo
+        _WifiDataDispFile.write(reinterpret_cast<const uint8_t *>(&_WifiDataDisp), sizeof(_WifiDataDisp));
+
+        // Fecha o arquivo
+        _WifiDataDispFile.close();
+
+        // Registra um log indicando que o arquivo foi criado com sucesso
+        debug.Println("DispenserData.Clear_WifiConfig()", "Arquivo /WifiDataDisp.bin, criado com sucesso", "INFO");
+
+        // Retorna true indicando que a operação foi bem-sucedida
+        return true;
+    }
+    else
+    {
+        // Caso o arquivo não possa ser aberto, registra um log de erro
+        debug.Println("DispenserData.Clear_WifiConfig()", "Erro ao abrir /WifiDataDisp.bin, ou arquivo corrompido", "WARN");
+
+        // Retorna false indicando que a operação falhou
+        return false;
+    }
+}
+
+DispenserData::WifiDataDisp DispenserData::Read_WifiDataDisp()
+{
+    // Registra um log indicando que o arquivo /WifiDataDisp.bin está sendo limpo
+    debug.Println("DispenserData.Read_WifiDataDisp()", "Lendo em /WifiDataDisp.bin ", "INFO");
+    // Cria uma estrutura para armazenar os dados lidos do arquivo, inicializada com zero
+    WifiDataDisp _WifiDataDisp = {};
+
+    // Tenta abrir o arquivo /WifiDataDisp.bin para leitura no SPIFFS
+    File _WifiDataDispFile = SPIFFS.open(_filenameWifiData, FILE_READ);
+
+    // Verifica se o arquivo foi aberto corretamente
+    if (!_WifiDataDispFile)
+    {
+        // Caso o arquivo não possa ser aberto, registra um log de erro
+        debug.Println("DispenserData.Read_WifiDataDisp()", "Erro ao abrir arquivo /WifiDataDisp.bin ", "ERROR");
+
+        // Retorna uma estrutura vazia (com todos os campos zero) indicando que houve erro na leitura
+        return {};
+    }
+    else
+    {
+        // Lê os dados do arquivo e os armazena na estrutura _WifiDataDisp
+        _WifiDataDispFile.read(reinterpret_cast<uint8_t *>(&_WifiDataDisp), sizeof(_WifiDataDisp));
+
+        // Fecha o arquivo após a leitura
+        _WifiDataDispFile.close();
+
+        // Registra um log indicando que os dados foram coletados com sucesso
+        debug.Println("DispenserData.Read_WifiDataDisp()", "Dados coletados /WifiDataDisp.bin ", "INFO");
+
+        // Retorna a estrutura com os dados lidos do arquivo
+        return _WifiDataDisp;
+    }
+}
+
+void DispenserData::Write_WifiDataDisp(const std::string &_Ssid, const std::string &_Pass, uint8_t _Mode, uint16_t _SyncTime)
+{
+    WifiDataDisp _WifiDataDisp = {};
+
+    // Copia o SSID para a estrutura, garantindo que não ultrapasse o tamanho do buffer
+    strncpy(_WifiDataDisp.Ssid, _Ssid.c_str(), sizeof(_WifiDataDisp.Ssid) - 1);
+    _WifiDataDisp.Ssid[sizeof(_WifiDataDisp.Ssid) - 1] = '\0'; // Garante terminação correta
+
+    // Copia a senha para a estrutura, garantindo que não ultrapasse o tamanho do buffer
+    strncpy(_WifiDataDisp.Pass, _Pass.c_str(), sizeof(_WifiDataDisp.Pass) - 1);
+    _WifiDataDisp.Pass[sizeof(_WifiDataDisp.Pass) - 1] = '\0';
+
+    _WifiDataDisp.Mode = _Mode;
+    _WifiDataDisp.SyncTime = _SyncTime;
+
+    File _WifiDataDispFile = SPIFFS.open(_filenameWifiData, FILE_WRITE);
+    if (_WifiDataDispFile)
+    {
+        _WifiDataDispFile.write(reinterpret_cast<const uint8_t *>(&_WifiDataDisp), sizeof(_WifiDataDisp));
+        _WifiDataDispFile.close();
+        debug.Println("DispenserData.Write_WifiDataDisp()", "Escrita /WifiDataDisp.bin realizada com sucesso", "INFO");
+    }
+    else
+    {
+        debug.Println("DispenserData.Write_WifiDataDisp()", "Erro ao abrir /WifiDataDisp.bin ou arquivo corrompido", "ERROR");
+    }
+}
+

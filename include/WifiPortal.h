@@ -4,21 +4,20 @@
 #include <Arduino.h>
 #include <Wifi.h>
 #include <WebServer.h>
-#include <Preferences.h>
 #include <myDebug.h>
+#include <DispenserData.h>
 
 class WifiPortal
 {
 public:
     // função que recebe ponteiro da instance da função debug
-    explicit WifiPortal(myDebug &debugInstance) : debug(debugInstance) {}
-
+    //explicit WifiPortal(myDebug &debugInstance) : debug(debugInstance) {}
+    explicit WifiPortal(myDebug &debugInstance, DispenserData &dataInstance)
+      : debug(debugInstance), dispenserData(dataInstance) {}
     // função que inicializa do esp em modoap e inicia o portal de configurações
     void ApMode();
     // função que espera pela resposta do usuario
-    bool HandleClient();
-    // A instância de Preferences será passada para a classe em vez de ser criada aqui
-    void setPreferences(Preferences &prefs);
+    bool HandleClient();    
     // função que faz o scan da rede
     void performScan();
 
@@ -28,7 +27,7 @@ private:
     String networksHtml; // Armazena o resultado do escaneamento em HTML
 
     WebServer server; // ponteiro do server
-    Preferences* preferences = nullptr; // Ponteiro para Preferences
+    
     String AP_password = "elroimedical";
     bool PortalConfigurado = false;
     // prototipo de função de scan de rede
@@ -39,6 +38,7 @@ private:
     void handleSave();
 
     myDebug &debug; // Referência ao objeto myDebug
+    DispenserData &dispenserData; // referencia do objeto Dispenser data
 
     // função de classificação de intensidade de sinal
     String classifySignal(int dBm);
@@ -124,8 +124,8 @@ private:
 
             <label for="communicationMode">Modo de Comunicação:</label>
             <select name='communicationMode' id='communicationMode' required onchange="updateFieldValidation()">
-                <option value='master'>Master</option>
-                <option value='slave'>Slave</option>
+                <option value='1'>Master</option>
+                <option value='2'>Slave</option>
             </select>
             
             <input type='submit' value='Salvar'>

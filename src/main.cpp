@@ -22,11 +22,11 @@ CardRFID NFC_Check();
 
 Adafruit_PN532 nfc(PN532_SDA, PN532_SLC);
 
-myDebug debug(true);     // cria instancia para lib de debug serial
-Preferences prefs; // cria instancia para preferences
+myDebug debug(true); // cria instancia para lib de debug serial
 
-WifiPortal MyPortalConfig(debug);     // cria instancia do portal, e repassa  instancia do debug compartilhada
 DispenserData MyDataDispenser(debug); // cria instancia dados SPIFFS, e repassa  instancia do debug compartilhada
+
+WifiPortal MyPortalConfig(debug, MyDataDispenser); // cria instancia do portal, e repassa  instancia do debug compartilhada
 
 A041SK DetectorDeMaos(30, 100, S_DetectorPin);
 // RV1_Timer PotenciometroTemporizador(1000, 5000, S_TemporizadorPin);
@@ -35,66 +35,81 @@ A041SK DetectorDeMaos(30, 100, S_DetectorPin);
 
 DispenserData::Registros _RegistrosTemp;
 DispenserData::ConfigReg _ConfigRegTemp;
+DispenserData::WifiDataDisp _WifiDataTemp;
 
 void setup()
 {
 
   debug.begin(3, 115200); // Configura o nível de debug: 3 (INFO, WARN, ERROR)
-  debug.Println("SETUP", "==========================", "WARN");
-  debug.Println("SETUP", "Inicializando Dispenser IOT Elroi Medicial", "WARN");
-  Pin_InOutConfig(); // chama função de inicializa pinos
-  debug.Println("SETUP", "Verificação de metodo de comunicacao", "WARN");
-  // false = read/write // abre namespace da preferences  
-  //prefs.begin("WifiParameters", false);
-  //bool WifiConfigured = prefs.getBool("configured");
-  //bool DispenserMode = prefs.getBool("mode");   
-  //prefs.end();  
- // debug.Print("SETUP", "Portal foi configurado ? ", "WARN");
-  //debug.Println("SETUP", WifiConfigured ? "SIM" : "NAO", "WARN");
 
-  bool WifiConfigured = false;
-  bool DispenserMode = false;
-  // inicialização de eventgroup /  tarefa de status rtos
+  debug.Println("SETUP", "=============Dispenser IOT Elroi Medicial=============", "WARN");
+
+  Pin_InOutConfig(); // chama função de inicializa pinos
+
+  debug.Println("SETUP", "Inicializando tarefas RTOS criticas do sistema", "WARN");
+
+  //------------------------------------INICIALIZAÇÃO CRITICA RTOS -----------------------------//
   xEventGroupStatusHandle = xEventGroupCreate(); // inicia eventgroup do status do led
   xTaskCreatePinnedToCore(xTask_StatusLed, "TASK10", configMINIMAL_STACK_SIZE, NULL, 2, &xTask_StatusLedHandle, PRO_CPU_NUM);
-  debug.Print("SETUP", "Requisicao de configuracao de portao via pinos ? ", "WARN");
+  //------------------------------------INICIALIZAÇÃO CRITICA RTOS -----------------------------//
+
+  debug.Println("SETUP", "Inicializando Sistemas de arquivos do sistema", "WARN");
+  MyDataDispenser.begin();
+  vTaskDelay(pdMS_TO_TICKS(100));
+
+  /*
+
+  debug.Println("SETUP", "Requisicao restauração memoria flash via DipSwitch_Bit1 ? ", "WARN");
+  debug.Println("SETUP", digitalRead(!DipSwitch_Bit1) ? "SIM" : "NAO", "WARN");
+
+  if (!DipSwitch_Bit1)
+  {
+    MyDataDispenser.Clear_Registros();
+  }
+
+  */
+
+  debug.Println("SETUP", "Verificando se portal já foi configurado", "WARN");
+  _WifiDataTemp = MyDataDispenser.Read_WifiDataDisp();
+
+  debug.Print("SETUP", "Modo de operação do dispenser : ", "WARN");
+  debug.Println("SETUP", String(_WifiDataTemp.Mode), "WARN");
+  debug.Println("SETUP", " 0 = não configurado || 1 = modo master || 2 = modo slave ", "WARN");
+  debug.Println("SETUP", "SSID : " + String(_WifiDataTemp.Ssid) + " PASSWORD :" + String(_WifiDataTemp.Pass), "WARN");
+
+  debug.Print("SETUP", "Requisicao de configuracao via DipSwitch_Bit0 ? ", "WARN");
   bool DipSwitch_Bit0_value = digitalRead(DipSwitch_Bit0);
   delay(250);
   debug.Println("SETUP", DipSwitch_Bit0_value ? "SIM" : "NAO", "WARN");
 
-  // Dispenser em modo de configuração do portal
-  if (!WifiConfigured || DipSwitch_Bit0_value)
+  // se o portal não foi configurado, ou houve uma requisição via pinos
+  if (_WifiDataTemp.Mode == 0 || DipSwitch_Bit0_value)
   {
+
     // se entrou aqui, é porque não existe configuração ou foi forçada pelos dipswitch
-    debug.Println("SETUP", "Inicializando tarefa de selecao de modo de comunicacao", "WARN");
+    debug.Println("SETUP", "Inicializando Portal de configuracao ", "WARN");
     // faz demonstração visual que o portal nao foi configurado
     xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM1Hz);
     vTaskDelay(pdMS_TO_TICKS(500));
     xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM_VD1Hz);
     vTaskDelay(pdMS_TO_TICKS(500));
     xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVD1Hz);
-    // repassa instancia de preferences para dentro da função
-    MyPortalConfig.setPreferences(prefs);
-    // solicita inicio de configuração em modo ap
-    MyPortalConfig.ApMode();
+
     xTaskCreatePinnedToCore(xTask_SelectComunicationMode, "TASK0", 4096, NULL, 1, &xTask_SelectComunicationModeHandle, APP_CPU_NUM);
+    vTaskDelay(pdMS_TO_TICKS(250));
   }
-  // Dispenser já configurado, escolhe modo de operação
+  // se o portal já foi configurado
   else
   {
 
-    // verifica metodo de comunicação true = slave  // false = master
-    if (DispenserMode) // slave mode
-    {
-      debug.Println("SETUP", "Inicializando Dispenser em modo Slave", "WARN");
-      xTaskCreatePinnedToCore(xTask_CommunicationModeSlave, "TASK1", 4096, NULL, 1, &xTask_CommunicationModeSlaveHandle, APP_CPU_NUM);
-    }
-    else // master mode
+    // verifica se o dispenser foi configurado em modo master == 1
+    if (_WifiDataTemp.Mode == 1)
     {
       debug.Println("SETUP", "Inicializando Dispenser em modo Master", "WARN");
       bool StatusWifiConnect = _WifiConnect();
       if (StatusWifiConnect)
       {
+        debug.Println("SETUP", "Criando Task Metodo ComunicationMaster", "WARN");
         xTaskCreatePinnedToCore(xTask_ComunicationModeMaster, "TASK2", 4096, NULL, 1, &xTask_ComunicationModeMasterHandle, APP_CPU_NUM);
       }
       else
@@ -105,23 +120,14 @@ void setup()
         // TODO :  se não conectar wifi o que fazer ?????
       }
     }
+    // se não é  == 1 então slave
+    else
+    {
+
+      debug.Println("SETUP", "Inicializando Dispenser em modo Slave", "WARN");
+      xTaskCreatePinnedToCore(xTask_CommunicationModeSlave, "TASK1", 8192, NULL, 1, &xTask_CommunicationModeSlaveHandle, APP_CPU_NUM);
+    }
   }
-
-  debug.Println("SETUP", "Inicializando MydataDispenserFunction", "WARN");
-
-  // inicializa dados do dispenser
-  MyDataDispenser.begin();
-  // verifica dipswitch para reinicio de memoria flash esp
-  // debug.Println("SETUP", "Requisicao restauracao memoria flash DIPSWITCH1 ? ", "WARN");
-  // debug.Println("SETUP", digitalRead(!DipSwitch_Bit1) ? "SIM" : "NAO", "WARN");
-  /*
-  if(!DipSwitch_Bit1){
-    MyDataDispenser.ClearAll();
-  }
-  */
-  delay(500);
-
-  //
 
   nfc.begin();
 
@@ -140,7 +146,7 @@ void setup()
   Serial.print('.');
   Serial.println((versiondata >> 8) & 0xFF, DEC);
 
-  xTaskCreatePinnedToCore(xTask_ControlDispenser, "TASK20", 4096, NULL, 1, &xTask_ControlDispenserHandle, tskNO_AFFINITY);
+  xTaskCreatePinnedToCore(xTask_ControlDispenser, "TASK20", 2048, NULL, 1, &xTask_ControlDispenserHandle, tskNO_AFFINITY);
 };
 
 void loop()
@@ -153,8 +159,12 @@ void loop()
 // TAREFA DE MODO DE CONGIGURAÇÃO EM MODO AP
 void xTask_SelectComunicationMode(void *pvParameters)
 {
+  // Executa apenas uma vez antes de entrar no loop
+  MyPortalConfig.ApMode(); // Inicializa o portal AP
+
   unsigned long lastTime = 0;
   const unsigned long interval = 2000; // tempo de demostração de portal ativo led
+
   while (pdTRUE)
   {
     bool ConfigDone = MyPortalConfig.HandleClient();
@@ -184,17 +194,49 @@ void xTask_SelectComunicationMode(void *pvParameters)
 
 void xTask_ComunicationModeMaster(void *pvParameters)
 {
-  vTaskDelete(xTask_CommunicationModeSlaveHandle);
+  debug.Println("xTask_ComunicationModeMaster", "Inicializando dados da tarefa", "WARN");  
+  unsigned long lastTime = 0;
+  const unsigned long interval_get = 5000;
+
   while (pdTRUE)
   {
-    vTaskDelay(5000);
+    
+    unsigned long currentTime = millis();
+    if (currentTime - lastTime >= interval_get)
+    {
+      debug.Println("xTask_ComunicationModeMaster", "Tentativa de conexão com API", "WARN");
+      HTTPClient http;
+      String url = "https://bacpro.com.br/api/status";
+      http.begin(url);
+                        
+      // Inicia a requisição
+      int httpResponseCode = http.GET(); // Faz a requisição GET
+      /*
+      if (httpResponseCode > 0)
+      {
+        String payload = http.getString(); // Obtém a resposta
+        Serial.println( "Resposta da API: " + payload);
+      }
+      else
+      {
+        Serial.println( "Erro na requisição HTTP, código: ");
+        Serial.println( String(httpResponseCode));
+      }
+      */
+      http.end(); // Fecha a conexão
+    }
+
+    vTaskDelay(10); // Pequeno atraso para evitar consumir CPU desnecessariamente
   }
 };
 
 void xTask_CommunicationModeSlave(void *pvParameters)
 {
-  vTaskDelay(5000);
-  vTaskDelete(xTask_ComunicationModeMasterHandle);
+  while (pdTRUE)
+  {
+    vTaskDelay(10);
+  }
+  
 };
 // TAREFA DE CONTROLE DO DISPENSER
 void xTask_ControlDispenser(void *pvParameters)
@@ -356,24 +398,19 @@ void Pin_InOutConfig()
   vTaskDelay(pdMS_TO_TICKS(100));
 }
 // configuração e conecção no wifi
+
 bool _WifiConnect()
 {
-  String ssid = "";
-  String password = "";
-  // false = read/write // abre namespace da preferences
-  prefs.begin("WifiParameters", false);
-  prefs.getString("ssid", ssid);
-  prefs.getString("password", password);
-  prefs.end();
-  debug.Println("_WifiConnect()", "Dados Preferences", "WARN");
-  debug.Println("_WifiConnect()", "SSID : " + ssid + " PASSWORD :" + password, "WARN");
+
+  debug.Println("_WifiConnect()", "Dados do Wifi", "WARN");
+  debug.Println("_WifiConnect()", "SSID : " + String(_WifiDataTemp.Ssid) + " PASSWORD :" + String(_WifiDataTemp.Pass), "WARN");
   // aguarda intervalo  caso passou, retorna false de  pois nao conseguiu se conectar no wifi
-  if (ssid != "" && password != "")
+  if (_WifiDataTemp.Ssid != "" && _WifiDataTemp.Pass != "")
   {
 
-    WiFi.begin(ssid, password);
+    WiFi.begin(_WifiDataTemp.Ssid, _WifiDataTemp.Pass);
     debug.Println("_WifiConnect()", "Iniciando comunicacao WIFI", "WARN");
-    
+
     const unsigned long WifiInterval = 15000 + millis(); // Tempo que espera o para fazer conexçao com wifi
     while (WiFi.status() != WL_CONNECTED)
     {
@@ -389,19 +426,20 @@ bool _WifiConnect()
       Serial.print(".");
     }
     debug.Println("_WifiConnect()", "Wi-Fi conectado", "WARN");
-    debug.Println("_WifiConnect()", "Endereco de IP : " + WiFi.localIP(), "WARN");
+    IPAddress localIP = WiFi.localIP();
+    String ipString = localIP.toString();  // Converte o IP para uma string    
+    debug.Println("_WifiConnect()", "Endereco de IP : " + ipString, "WARN");
 
     return true;
   }
   else
   {
-    debug.Println("_WifiConnect()", "SSID ou PASSWORD invalidos, reiniciando dados de congiguração do poeral", "ERROR");
-    prefs.begin("WifiParameters", false);
-    prefs.putBool("configured", false);
-    prefs.end();
+    debug.Println("_WifiConnect()", "SSID ou PASSWORD invalidos, reiniciando dados de congiguração do portal", "ERROR");
+
     return false;
   }
 }
+
 // função que le os dados do cartão
 CardRFID NFC_Check()
 {

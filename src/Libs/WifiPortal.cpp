@@ -1,11 +1,5 @@
 #include <WifiPortal.h>
 
-
-void WifiPortal::setPreferences(Preferences &prefs)
-{
-    this->preferences = &prefs; // Armazena o endereço
-};
-
 // modo de inicialização em modo ap
 void WifiPortal::ApMode()
 {
@@ -82,41 +76,24 @@ void WifiPortal::handleSave()
 
     String ssid = server.arg("ssid");
     String password = server.arg("password");
-    String modeStr = server.arg("communicationMode");
+    String modeStr = server.arg("communicationMode");    
 
-    bool mode = (modeStr == "slave");
     debug.Println("WifiPortal.handleSave()", "Metodo de comunicação : " + modeStr, "INFO");
+    debug.Println("WifiPortal.handleSave()", " 1 = modo master || 2 = modo slave ", "WARN");
     debug.Println("WifiPortal.handleSave()", "ssid : " + ssid, "INFO");
     debug.Println("WifiPortal.handleSave()", "password : " + password, "INFO");
 
-    if (preferences->begin("teste", false))
-    {
-        preferences->putString("ssid_wifi", ssid);
-        preferences->putString("password_wifi", password);
-        preferences->putBool("mode", mode);
-        preferences->putBool("configured", true);
-        ssid = "";
-        password = "";
+    uint8_t _Mode = (uint8_t)modeStr.toInt(); 
+    std::string _SsidString = std::string(ssid.c_str());
+    std::string _PassString = std::string(password.c_str());    
+    uint16_t _SyncTime = 1500;
 
-        preferences->getString("ssid_wifi", ssid);
-        preferences->getString("password_wifi", password);
-
-        debug.Println("WifiPortal.handleSave()", "ssid : " + ssid, "INFO");
-        debug.Println("WifiPortal.handleSave()", "password : " + password, "INFO");
-
-        preferences->end();
-
-        debug.Println("WifiPortal.handleSave()", "Dados preferences salvos", "INFO");
-    }
-    else
-    {
-        debug.Println("WifiPortal.handleSave()", "Falha ao inicializar preferences", "ERROR");
-    }
+    dispenserData.Write_WifiDataDisp(_SsidString, _PassString, _Mode, _SyncTime);
 
     server.send(200, "text/html; charset=UTF-8", "<html><body><h2>Configurações Salvas!</h2></body></html>");
-    PortalConfigurado = true;
+    debug.Println("WifiPortal.handleSave()", "Dados do portal salvo", "INFO");
 
-    debug.Println("WifiPortal.handleSave()", "Dados do portal salvo na preferences", "INFO");
+    PortalConfigurado = true;
 };
 
 void WifiPortal::performScan()
@@ -168,29 +145,21 @@ void WifiPortal::performScan()
     }
 };
 
+
 String WifiPortal::classifySignal(int dBm)
 {
     if (dBm >= -40)
-    {
         return "Excelente";
-    }
     else if (dBm >= -60)
-    {
         return "Bom";
-    }
     else if (dBm >= -70)
-    {
-        return "Fraco";
-    }
+        return "Razoável";
     else if (dBm >= -80)
-    {
         return "Ruim";
-    }
     else
-    {
-        return ""; // Não deve ser usada, pois sinal abaixo de -70 será filtrado
-    }
-};
+        return "Muito Ruim"; // Sinal praticamente inutilizável
+}
+
 
 bool WifiPortal::HandleClient()
 {
