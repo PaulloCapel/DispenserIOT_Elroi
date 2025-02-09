@@ -8,8 +8,8 @@ void xTask_StatusLed(void *pvParameters);
 void xTask_ControlDispenser(void *pvParameters);
 
 void xTask_SelectComunicationMode(void *pvParameters);
-void xTask_ComunicationModeMaster(void *pvParameters);
-void xTask_CommunicationModeSlave(void *pvParameters);
+void xTask_ModeMaster(void *pvParameters);
+void xTask_ModeSlave(void *pvParameters);
 void xTask_ControlDispenser(void *pvParameters);
 
 // prototipos de funções comuns
@@ -17,8 +17,17 @@ void xTask_ControlDispenser(void *pvParameters);
 void Pin_InOutConfig();
 bool _WifiConnect();
 CardRFID NFC_Check();
+ApiStatus StatusAPI();
+String macToString(const uint8_t *mac);
+void enviarPost();
+uint32_t getUnixTime();
+
+void PrintTime();
 
 // intancia de libs
+
+WiFiClientSecure client;
+HTTPClient http;
 
 Adafruit_PN532 nfc(PN532_SDA, PN532_SLC);
 
@@ -110,7 +119,7 @@ void setup()
       if (StatusWifiConnect)
       {
         debug.Println("SETUP", "Criando Task Metodo ComunicationMaster", "WARN");
-        xTaskCreatePinnedToCore(xTask_ComunicationModeMaster, "TASK2", 8192, NULL, 1, &xTask_ComunicationModeMasterHandle, tskNO_AFFINITY);
+        xTaskCreatePinnedToCore(xTask_ModeMaster, "TASK2", 8192, NULL, 1, &xTask_ModeMasterHandle, tskNO_AFFINITY);
       }
       else
       {
@@ -125,7 +134,7 @@ void setup()
     {
 
       debug.Println("SETUP", "Inicializando Dispenser em modo Slave", "WARN");
-      xTaskCreatePinnedToCore(xTask_CommunicationModeSlave, "TASK1", 4096, NULL, 1, &xTask_CommunicationModeSlaveHandle, tskNO_AFFINITY);
+      xTaskCreatePinnedToCore(xTask_ModeSlave, "TASK1", 4096, NULL, 1, &xTask_ModeSlaveHandle, tskNO_AFFINITY);
     }
   }
 
@@ -192,71 +201,76 @@ void xTask_SelectComunicationMode(void *pvParameters)
   }
 };
 
-void xTask_ComunicationModeMaster(void *pvParameters)
+void xTask_ModeMaster(void *pvParameters)
 {
-  debug.Println("xTask_ComunicationModeMaster", "Inicializando dados da tarefa", "WARN");
-  unsigned long lastTime = 0;
-  const unsigned long interval_get = 10000;
-  UBaseType_t highWaterMark;
+
+  debug.Println("xTask_ModeMaster", "Inicializando dados da tarefa", "WARN");
+  // UBaseType_t highWaterMark;
+
+  ApiStatus _StatusAPI;
+
+  // variaveis de temporizador de atualização de timer dispenser
+  unsigned long LastTime_AtualizaTime;
+  const unsigned long Interval_AtualizaTime = 300000; // atualização a cada 5 minutos
+
+  // variaveis de temporizador metodo post api
+  unsigned long LastTime_PostTime;
+  const unsigned long Interval_PostTime = 300000; // atualização a cada 1 minutos
+
+  unsigned long currentTime = 0;
 
   while (pdTRUE)
   {
-
-    unsigned long currentTime = millis();
-    if (currentTime - lastTime >= interval_get)
+    // função de atualização de time dispenser chama a cada 1 minuto, ou na primeira chamada tarefa
+    currentTime = millis();
+    if ((currentTime - LastTime_AtualizaTime >= Interval_AtualizaTime) || !AtualizaTime)
     {
-      highWaterMark = uxTaskGetStackHighWaterMark(NULL);
-      char buffer[50];                                                          // Buffer para formatar a mensagem
-      snprintf(buffer, sizeof(buffer), "Pilha livre: %u bytes", highWaterMark); // Formata a string
-      debug.Println("xTask_ComunicationModeMaster", buffer, "INFO");
-
-      debug.Println("xTask_ComunicationModeMaster", "Tentativa de conexão com API", "WARN");
-
-      HTTPClient http;
-      String url = "https://bacpro.com.br/api/status";
-      http.begin(url);                   // Inicia a conexão com a URL
-      int httpResponseCode = http.GET(); // Faz a requisição GET
-      debug.Println("xTask_ComunicationModeMaster", "Codigo de resposta HTTP : " + httpResponseCode, "WARN");
-
-      if (httpResponseCode > 0)
+      debug.Println("xTask_ModeMaster", "Solicitação de atualização time Dispenser", "WARN");
+      _StatusAPI = StatusAPI();
+      if (_StatusAPI.req)
       {
+        struct timeval tv;
+        tv.tv_sec = _StatusAPI.timestamp;
+        tv.tv_usec = 0;
 
-        String payload = http.getString(); // Obtém a resposta como string
-        Serial.println("Resposta da API: " + payload);
-
-        // Processando o JSON
-        DynamicJsonDocument doc(200);
-        DeserializationError error = deserializeJson(doc, payload);
-
-        if (!error)
+        if (settimeofday(&tv, NULL) != 0)
         {
-          bool status = doc["status"];
-          uint32_t timestamp = doc["timestamp"];
-
-          Serial.print("Status: ");
-          Serial.println(status);
-          Serial.print("Timestamp: ");
-          Serial.println(timestamp);
+          debug.Println("xTask_ModeMaster", "Erro ao configurar o horário!", "WARN");
         }
         else
         {
-          Serial.println("Erro ao parsear JSON!");
+          debug.Println("xTask_ModeMaster", "Horário configurado com sucesso!", "WARN");
+          PrintTime();
+
+          AtualizaTime = true;
         }
       }
       else
       {
-        Serial.print("Erro na requisição HTTP, código: ");
-        Serial.println(httpResponseCode);
+        debug.Println("xTask_ModeMaster", "Falha ao solicitar StatusAPI()", "ERROR");
       }
+      LastTime_AtualizaTime = millis();
+    }
 
-      http.end(); // Fecha a conexão
+    // highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+    // char buffer[50];                                                          // Buffer para formatar a mensagem
+    // snprintf(buffer, sizeof(buffer), "Pilha livre: %u bytes", highWaterMark); // Formata a string
+    // debug.Println("xTask_ModeMaster", buffer, "INFO");
+    // debug.Println("xTask_ModeMaster", "Tentativa de conexão com API", "INFO");
+    vTaskDelay(pdMS_TO_TICKS(500));
+    currentTime = millis();
+    if (currentTime - LastTime_PostTime >= Interval_PostTime)
+    {
+      xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVD1Hz);
+      enviarPost();
+      LastTime_PostTime = millis();
     }
 
     vTaskDelay(10); // Pequeno atraso para evitar consumir CPU desnecessariamente
   }
 };
 
-void xTask_CommunicationModeSlave(void *pvParameters)
+void xTask_ModeSlave(void *pvParameters)
 {
   while (pdTRUE)
   {
@@ -495,6 +509,135 @@ CardRFID NFC_Check()
   }
 
   return _card;
+}
+
+// função que solicita status com a API
+
+ApiStatus StatusAPI()
+{
+  ApiStatus _StatusAPI;
+
+  // HTTPClient http;
+  String url = "https://bacpro.com.br/api/status";
+  http.begin(url);                   // Inicia a conexão com a URL
+  int httpResponseCode = http.GET(); // Faz a requisição GET
+  vTaskDelay(pdMS_TO_TICKS(50));
+  //
+
+  if (httpResponseCode > 0)
+  {
+
+    String payload = http.getString(); // Obtém a resposta como string
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, payload);
+    http.end();
+    if (!error)
+    {
+      _StatusAPI.req = doc["status"];
+      _StatusAPI.timestamp = doc["timestamp"];
+      debug.Println("StatusAPI", "Status: " + String(_StatusAPI.req) + " Timestamp: " + String(_StatusAPI.timestamp), "INFO");
+    }
+    else
+    {
+      debug.Println("StatusAPI", "Erro ao parsear JSON!", "ERROR");
+    }
+  }
+  else
+  {
+    debug.Println("StatusAPI", "Erro na requisição HTTP, código: " + String(httpResponseCode), "ERROR");
+  }
+
+  return _StatusAPI;
+}
+
+void PrintTime()
+{
+
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo))
+  {
+    debug.Println("PrintTime", "Falha ao obter o horário!", "WARN");
+    return;
+  }
+
+  // Formata a data/hora em uma string
+  char buffer[80]; // Buffer para armazenar a string formatada
+  strftime(buffer, sizeof(buffer), "Horário atual: %A, %d %B %Y %H:%M:%S", &timeinfo);
+
+  // Chama a função debug.Println com a string formatada
+  debug.Println("PrintTime", buffer, "WARN");
+}
+
+// Função para formatar o MAC address
+String macToString(const uint8_t *mac)
+{
+  char buf[18]; // 6 bytes MAC -> 17 caracteres + null terminator
+  snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  return String(buf);
+}
+
+/*
+// Função para formatar o MAC address
+String ID_ToString(const uint8_t* ID) {
+  char buf[12]; // 6 bytes MAC -> 17 caracteres + null terminator
+  snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X",
+  ID[0], ID[1], ID[2], ID[3]);
+  return String(buf);
+}
+  */
+
+uint32_t getUnixTime()
+{
+  time_t now;
+  time(&now);
+  return static_cast<uint32_t>(now);
+}
+
+// Função para enviar o POST
+void enviarPost()
+{
+  // Configurar o certificado raiz
+  //client.setCACert(rootCACertificate);
+  client.setInsecure(); 
+  // Criar JSON
+  JsonDocument doc;
+  // Array para armazenar o endereço MAC
+  uint8_t baseMac[6];
+  // Lê o MAC Address da interface STA
+  esp_read_mac(baseMac, ESP_MAC_WIFI_STA);
+  doc["hw_id"] = macToString(baseMac);
+  doc["event_id"] = 100;
+  doc["freepd"] = 0;
+  // doc["data"] = registro.data;
+  doc["data"] = random(65536);
+  // doc["timestamp"] = registro.timestamp;
+  doc["timestamp"] = getUnixTime();
+
+  // Serializar JSON
+  String payload;
+  serializeJson(doc, payload);
+
+  // Configurar HTTP
+  http.begin(client, "https://bacpro.com.br/api/registro-dispenser");
+  http.addHeader("Content-Type", "application/json");
+
+  // Enviar POST e tratar resposta
+  int httpCode = http.POST(payload);
+
+  if (httpCode > 0)
+  {
+    Serial.printf("Código HTTP: %d\n", httpCode);
+    String response = http.getString();
+    Serial.println("Resposta: " + response);
+    http.end();
+  }
+  else
+  {
+    Serial.printf("Erro na requisição: %s\n", http.errorToString(httpCode).c_str());
+  }
+
+  
 }
 
 /*---------------------------------------------------------------------------------------- */

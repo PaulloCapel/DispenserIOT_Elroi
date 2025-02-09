@@ -86,6 +86,7 @@ public:
         char Pass[64];          // senha do wifi maximo 63 caracteres      
         uint8_t Mode;           // 0 = não configurado || 1 = modo master || 2 = modo slave 
         uint16_t SyncTime;      // tempo de sincronização server   
+        uint32_t LastUnixTime;  // ultimo valor recebido 
                 
     };
     // Função que salva dados no arquivo configuração do wifi

@@ -9,8 +9,8 @@ TaskHandle_t
     xTask_ControlDispenserHandle,
     xTask_DataControl,
     xTask_SelectComunicationModeHandle,
-    xTask_ComunicationModeMasterHandle,
-    xTask_CommunicationModeSlaveHandle;
+    xTask_ModeMasterHandle,
+    xTask_ModeSlaveHandle;
 
 EventGroupHandle_t
     xEventGroupStatusHandle;
@@ -30,6 +30,39 @@ struct CardRFID
     uint8_t uid_datablock4[16];
     uint32_t uid_uint32_t;
 };
+
+struct ApiStatus{
+    bool req;
+    uint32_t timestamp;
+};
+
+bool AtualizaTime = false;
+
+const char* rootCACertificate = \
+"-----BEGIN CERTIFICATE-----\n" \
+"MIIDfDCCAwKgAwIBAgISA5UU35gvfosubNvLTyXmvM/DMAoGCCqGSM49BAMDMDIx\n" \
+"CzAJBgNVBAYTAlVTMRYwFAYDVQQKEw1MZXQncyBFbmNyeXB0MQswCQYDVQQDEwJF\n" \
+"NTAeFw0yNDEyMjExNzU2MDRaFw0yNTAzMjExNzU2MDNaMBgxFjAUBgNVBAMTDWJh\n" \
+"Y3Byby5jb20uYnIwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNCAARKNvpcd7YcnZt4\n" \
+"V18mK3cBfozlbmiGg2HL5nDHqwPup63N5+1hE73bxgd1ucoE8r9jilvekS1Oel89\n" \
+"a7JQy+Ybo4ICEDCCAgwwDgYDVR0PAQH/BAQDAgeAMB0GA1UdJQQWMBQGCCsGAQUF\n" \
+"BwMBBggrBgEFBQcDAjAMBgNVHRMBAf8EAjAAMB0GA1UdDgQWBBSBtk6jgbHYiVuW\n" \
+"KVt9bVulg7n4tDAfBgNVHSMEGDAWgBSfK1/PPCFPnQS37SssxMZwi9LXDTBVBggr\n" \
+"BgEFBQcBAQRJMEcwIQYIKwYBBQUHMAGGFWh0dHA6Ly9lNS5vLmxlbmNyLm9yZzAi\n" \
+"BggrBgEFBQcwAoYWaHR0cDovL2U1LmkubGVuY3Iub3JnLzAYBgNVHREEETAPgg1i\n" \
+"YWNwcm8uY29tLmJyMBMGA1UdIAQMMAowCAYGZ4EMAQIBMIIBBQYKKwYBBAHWeQIE\n" \
+"AgSB9gSB8wDxAHYAzPsPaoVxCWX+lZtTzumyfCLphVwNl422qX5UwP5MDbAAAAGT\n" \
+"6pJC9AAABAMARzBFAiEAwslRydMeKXX4NHmZnkS4vU6hmPRyNFUCSu75UXAsI0wC\n" \
+"IAqJE4CfgXy4q//D+jNSTBIYBx55Gs8tk73watAzAedNAHcAE0rfGrWYQgl4DG/v\n" \
+"THqRpBa3I0nOWFdq367ap8Kr4CIAAAGT6pJDpQAABAMASDBGAiEAmjC7CqEWrqMg\n" \
+"t2vEVpo+50bBZcJaowBQ8x6QmQ4pA9QCIQDxzzBJdBa5yw4lVFxSl8o5G1woHE/w\n" \
+"zvwF5EyNAwzXyjAKBggqhkjOPQQDAwNoADBlAjAN19Kn1YOh4G9bJLnKfa91pwV6\n" \
+"tj128OrtNPWb1DjEj4Kht8eNSOGiNUSDc+mwWgICMQC73ecdSPmwdynOweja7gZV\n" \
+"GRoZFn6PkzYOkse7PuDj1tDmg06wznW7cl2tTrBipSg=\n" \
+"-----END CERTIFICATE-----\n";
+
+
+
 
 // event group bits
 
