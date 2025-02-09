@@ -110,7 +110,7 @@ void setup()
       if (StatusWifiConnect)
       {
         debug.Println("SETUP", "Criando Task Metodo ComunicationMaster", "WARN");
-        xTaskCreatePinnedToCore(xTask_ComunicationModeMaster, "TASK2", 4096, NULL, 1, &xTask_ComunicationModeMasterHandle, APP_CPU_NUM);
+        xTaskCreatePinnedToCore(xTask_ComunicationModeMaster, "TASK2", 8192, NULL, 1, &xTask_ComunicationModeMasterHandle, tskNO_AFFINITY);
       }
       else
       {
@@ -125,7 +125,7 @@ void setup()
     {
 
       debug.Println("SETUP", "Inicializando Dispenser em modo Slave", "WARN");
-      xTaskCreatePinnedToCore(xTask_CommunicationModeSlave, "TASK1", 8192, NULL, 1, &xTask_CommunicationModeSlaveHandle, APP_CPU_NUM);
+      xTaskCreatePinnedToCore(xTask_CommunicationModeSlave, "TASK1", 4096, NULL, 1, &xTask_CommunicationModeSlaveHandle, tskNO_AFFINITY);
     }
   }
 
@@ -194,35 +194,61 @@ void xTask_SelectComunicationMode(void *pvParameters)
 
 void xTask_ComunicationModeMaster(void *pvParameters)
 {
-  debug.Println("xTask_ComunicationModeMaster", "Inicializando dados da tarefa", "WARN");  
+  debug.Println("xTask_ComunicationModeMaster", "Inicializando dados da tarefa", "WARN");
   unsigned long lastTime = 0;
-  const unsigned long interval_get = 5000;
+  const unsigned long interval_get = 10000;
+  UBaseType_t highWaterMark;
 
   while (pdTRUE)
   {
-    
+
     unsigned long currentTime = millis();
     if (currentTime - lastTime >= interval_get)
     {
+      highWaterMark = uxTaskGetStackHighWaterMark(NULL);
+      char buffer[50];                                                          // Buffer para formatar a mensagem
+      snprintf(buffer, sizeof(buffer), "Pilha livre: %u bytes", highWaterMark); // Formata a string
+      debug.Println("xTask_ComunicationModeMaster", buffer, "INFO");
+
       debug.Println("xTask_ComunicationModeMaster", "Tentativa de conexão com API", "WARN");
+
       HTTPClient http;
       String url = "https://bacpro.com.br/api/status";
-      http.begin(url);
-                        
-      // Inicia a requisição
+      http.begin(url);                   // Inicia a conexão com a URL
       int httpResponseCode = http.GET(); // Faz a requisição GET
-      /*
+      debug.Println("xTask_ComunicationModeMaster", "Codigo de resposta HTTP : " + httpResponseCode, "WARN");
+
       if (httpResponseCode > 0)
       {
-        String payload = http.getString(); // Obtém a resposta
-        Serial.println( "Resposta da API: " + payload);
+
+        String payload = http.getString(); // Obtém a resposta como string
+        Serial.println("Resposta da API: " + payload);
+
+        // Processando o JSON
+        DynamicJsonDocument doc(200);
+        DeserializationError error = deserializeJson(doc, payload);
+
+        if (!error)
+        {
+          bool status = doc["status"];
+          uint32_t timestamp = doc["timestamp"];
+
+          Serial.print("Status: ");
+          Serial.println(status);
+          Serial.print("Timestamp: ");
+          Serial.println(timestamp);
+        }
+        else
+        {
+          Serial.println("Erro ao parsear JSON!");
+        }
       }
       else
       {
-        Serial.println( "Erro na requisição HTTP, código: ");
-        Serial.println( String(httpResponseCode));
+        Serial.print("Erro na requisição HTTP, código: ");
+        Serial.println(httpResponseCode);
       }
-      */
+
       http.end(); // Fecha a conexão
     }
 
@@ -236,7 +262,6 @@ void xTask_CommunicationModeSlave(void *pvParameters)
   {
     vTaskDelay(10);
   }
-  
 };
 // TAREFA DE CONTROLE DO DISPENSER
 void xTask_ControlDispenser(void *pvParameters)
@@ -427,7 +452,7 @@ bool _WifiConnect()
     }
     debug.Println("_WifiConnect()", "Wi-Fi conectado", "WARN");
     IPAddress localIP = WiFi.localIP();
-    String ipString = localIP.toString();  // Converte o IP para uma string    
+    String ipString = localIP.toString(); // Converte o IP para uma string
     debug.Println("_WifiConnect()", "Endereco de IP : " + ipString, "WARN");
 
     return true;

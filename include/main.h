@@ -7,7 +7,10 @@
 #include <hardwareserial.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+
+
 #include <time.h>
+#include <sys/time.h>
 
 /*LIB DE GERENCIADO FREERTOS*/
 #include "freertos/FreeRTOS.h"
