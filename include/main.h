@@ -35,6 +35,21 @@
 #include <0A41SK.h>
 #include <RV1_Timer.h>
 
+
+
+// PROTOTIPOS DE FUNÇÃO RTOS 
+
+// prototipos de funções do rtos
+
+void xTask_StatusLed(void *pvParameters);
+void xTask_ControlDispenser(void *pvParameters);
+
+void xTask_SelectComunicationMode(void *pvParameters);
+void xTask_ModeMaster(void *pvParameters);
+void xTask_ModeSlave(void *pvParameters);
+
+
+
 /*
 
   Autor           : Paulo Capel
@@ -83,6 +98,8 @@ struct Registro {
 
 
 */
+
+
 
 
 

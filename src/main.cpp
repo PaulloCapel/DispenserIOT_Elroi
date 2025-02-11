@@ -2,49 +2,46 @@
 #include <pin_InOut.h>
 #include <variaveis.h>
 
-// prototipos de funções do rtos
-
-void xTask_StatusLed(void *pvParameters);
-void xTask_ControlDispenser(void *pvParameters);
-
-void xTask_SelectComunicationMode(void *pvParameters);
-void xTask_ModeMaster(void *pvParameters);
-void xTask_ModeSlave(void *pvParameters);
-void xTask_ControlDispenser(void *pvParameters);
-
-// prototipos de funções comuns
+// -------------------------------PROTOTIPOS DE FUNÇÕES GERAIS---------------------------------------
 
 void Pin_InOutConfig();
-bool _WifiConnect();
-CardRFID NFC_Check();
-ApiStatus StatusAPI();
-String macToString(const uint8_t *mac);
-void enviarPost();
-uint32_t getUnixTime();
-
+void MontaRegistros(uint8_t event_id, CardRFID idCard);
 void PrintTime();
+bool _WifiConnect();
+uint32_t getUnixTime();
+String macToString(const uint8_t *mac);
+CardRFID NFC_Check();
 
-// intancia de libs
+// --------------------------------------------------------------------------------------------------
+
+
+// -------------------------------FUNÇÕES DA API-------------------------------------------------
+
+ApiStatus StatusAPI();
+void enviarPost();
+
+// ----------------------------------------------------------------------------------------------
+
+
+//-------------------------------INSTANCIAS DE LIBS PADRÕES----------------------------------------
 
 WiFiClientSecure client;
 HTTPClient http;
-
 Adafruit_PN532 nfc(PN532_SDA, PN532_SLC);
 
+// ----------------------------------------------------------------------------------------------
+
+
+//-------------------------------INSTANCIAS DE LIBS PROPRIAS----------------------------------------
+
 myDebug debug(true); // cria instancia para lib de debug serial
-
 DispenserData MyDataDispenser(debug); // cria instancia dados SPIFFS, e repassa  instancia do debug compartilhada
-
 WifiPortal MyPortalConfig(debug, MyDataDispenser); // cria instancia do portal, e repassa  instancia do debug compartilhada
-
 A041SK DetectorDeMaos(30, 100, S_DetectorPin);
 // RV1_Timer PotenciometroTemporizador(1000, 5000, S_TemporizadorPin);
 
-// structs do processo
+// ----------------------------------------------------------------------------------------------
 
-DispenserData::Registros _RegistrosTemp;
-DispenserData::ConfigReg _ConfigRegTemp;
-DispenserData::WifiDataDisp _WifiDataTemp;
 
 void setup()
 {
@@ -61,6 +58,8 @@ void setup()
   xEventGroupStatusHandle = xEventGroupCreate(); // inicia eventgroup do status do led
   xTaskCreatePinnedToCore(xTask_StatusLed, "TASK10", configMINIMAL_STACK_SIZE, NULL, 2, &xTask_StatusLedHandle, PRO_CPU_NUM);
   //------------------------------------INICIALIZAÇÃO CRITICA RTOS -----------------------------//
+  vTaskDelay(pdMS_TO_TICKS(100));
+  xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM1Hz); // da um sinal de vida
 
   debug.Println("SETUP", "Inicializando Sistemas de arquivos do sistema", "WARN");
   MyDataDispenser.begin();
@@ -119,7 +118,7 @@ void setup()
       if (StatusWifiConnect)
       {
         debug.Println("SETUP", "Criando Task Metodo ComunicationMaster", "WARN");
-        xTaskCreatePinnedToCore(xTask_ModeMaster, "TASK2", 8192, NULL, 1, &xTask_ModeMasterHandle, tskNO_AFFINITY);
+        xTaskCreatePinnedToCore(xTask_ModeMaster, "TASK2", 8192, NULL, 1, &xTask_ModeMasterHandle, PRO_CPU_NUM);
       }
       else
       {
@@ -134,7 +133,7 @@ void setup()
     {
 
       debug.Println("SETUP", "Inicializando Dispenser em modo Slave", "WARN");
-      xTaskCreatePinnedToCore(xTask_ModeSlave, "TASK1", 4096, NULL, 1, &xTask_ModeSlaveHandle, tskNO_AFFINITY);
+      xTaskCreatePinnedToCore(xTask_ModeSlave, "TASK1", 4096, NULL, 1, &xTask_ModeSlaveHandle, PRO_CPU_NUM);
     }
   }
 
@@ -155,7 +154,11 @@ void setup()
   Serial.print('.');
   Serial.println((versiondata >> 8) & 0xFF, DEC);
 
+ 
   xTaskCreatePinnedToCore(xTask_ControlDispenser, "TASK20", 2048, NULL, 1, &xTask_ControlDispenserHandle, tskNO_AFFINITY);
+
+  delay(100);
+  xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVD1Hz);
 };
 
 void loop()
@@ -211,11 +214,12 @@ void xTask_ModeMaster(void *pvParameters)
 
   // variaveis de temporizador de atualização de timer dispenser
   unsigned long LastTime_AtualizaTime;
-  const unsigned long Interval_AtualizaTime = 300000; // atualização a cada 5 minutos
+  const unsigned long Interval_AtualizaTime = 1807000; // atualização a cada 30 minutos
 
   // variaveis de temporizador metodo post api
   unsigned long LastTime_PostTime;
-  const unsigned long Interval_PostTime = 300000; // atualização a cada 1 minutos
+  //const unsigned long Interval_PostTime = 599998; // atualização a cada 5 minutos
+  const unsigned long Interval_PostTime = 179998; // atualização a cada 3 minutos
 
   unsigned long currentTime = 0;
 
@@ -257,7 +261,7 @@ void xTask_ModeMaster(void *pvParameters)
     // snprintf(buffer, sizeof(buffer), "Pilha livre: %u bytes", highWaterMark); // Formata a string
     // debug.Println("xTask_ModeMaster", buffer, "INFO");
     // debug.Println("xTask_ModeMaster", "Tentativa de conexão com API", "INFO");
-    vTaskDelay(pdMS_TO_TICKS(500));
+    //vTaskDelay(pdMS_TO_TICKS(500));
     currentTime = millis();
     if (currentTime - LastTime_PostTime >= Interval_PostTime)
     {
@@ -296,10 +300,11 @@ void xTask_ControlDispenser(void *pvParameters)
       CardRFID checkCard = NFC_Check();
       if (checkCard.succes)
       {
-        vTaskDelay(pdMS_TO_TICKS(250));
-        xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVD1Hz);
+        
+        xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OnLedVM_VD);
         // apos a detecção do cartão ele deve esperar pela inteação das mão do usuario até o timeout
         bool EsperaPelasMaos = true;
+        debug.Println("xTask_ControlDispenser()", "Aguardando pelas mãos", "INFO");
         unsigned long InitTime_EsperaPelasMaos = millis();
         while (EsperaPelasMaos)
         {
@@ -307,45 +312,55 @@ void xTask_ControlDispenser(void *pvParameters)
           // enquanto o tempo for menor que o timeout espera pelas mãos
           if (millis() <= (InitTime_EsperaPelasMaos + interval_timeout))
           {
+            vTaskDelay(pdMS_TO_TICKS(100)); // faz com que o looping seja chamado só de 100 em 100ms
             _Value = DetectorDeMaos.Read();
             if (!LigaBomba)
             {
               if (_Value)
               {
-                Serial.println("Mãos Detectadas");
+                xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OffLedVM_VD);
+                debug.Println("xTask_ControlDispenser()", "Maos detectadas ligando bomba", "INFO"); 
+                vTaskDelay(pdMS_TO_TICKS(100));             
                 LigaBomba = true;
-
-                interval_Bomba = millis() + 2000;
+                interval_Bomba = millis() + 2000; // função a ser implemenmtada do tempo do potenciometro
               }
             }
 
             while (LigaBomba)
             {
+              
               if (millis() > interval_Bomba)
               {
                 LigaBomba = false;
+                EsperaPelasMaos = false;
                 digitalWrite(BombaPin, LOW);
                 xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OffLedVM_VD);
+                debug.Println("xTask_ControlDispenser()", "Fluido dispensado desligando bomba", "INFO");
               }
               else
               {
                 digitalWrite(BombaPin, HIGH);
-                xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OnLedVM_VD);
+                xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OnLedVM_VD);                
               }
+              vTaskDelay(pdMS_TO_TICKS(100)); 
             }
           }
           else
           {
+            xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OffLedVM_VD);
+            vTaskDelay(50);            
+            debug.Println("xTask_ControlDispenser()", "TimeOut detector de mãos", "INFO");
             xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM1Hz);
+            LigaBomba = false;
             EsperaPelasMaos = false;
+            checkCard.succes = false;
+           
           }
         }
-
-        lastTime = millis();
       }
-
-      vTaskDelay(10); // Pequeno atraso para evitar consumir CPU desnecessariamente
+      lastTime = millis();     
     }
+    vTaskDelay(10); // Pequeno atraso para evitar consumir CPU desnecessariamente
   }
 }; // TAFERA DE STATUS DO LED DA PLACA
 void xTask_StatusLed(void *pvParameters)
@@ -503,7 +518,7 @@ CardRFID NFC_Check()
     }
     else
     {
-      debug.Println("NFC_Check()", "Modelo de cartao nao suportado", "INFO");
+      debug.Println("NFC_Check()", "Modelo de cartao nao suportado", "ERROR");
       memset(&_card, 0, sizeof(CardRFID)); // Preenche todos os bytes do objeto com 0
     }
   }
@@ -597,9 +612,10 @@ uint32_t getUnixTime()
 // Função para enviar o POST
 void enviarPost()
 {
+  debug.Println("enviarPost()", "Iniciando POST API", "INFO");
   // Configurar o certificado raiz
-  //client.setCACert(rootCACertificate);
-  client.setInsecure(); 
+  // client.setCACert(rootCACertificate);
+  client.setInsecure();
   // Criar JSON
   JsonDocument doc;
   // Array para armazenar o endereço MAC
@@ -626,21 +642,41 @@ void enviarPost()
   int httpCode = http.POST(payload);
 
   if (httpCode > 0)
-  {
-    Serial.printf("Código HTTP: %d\n", httpCode);
+  {    
+    debug.Println("enviarPost()", "Código HTTP: " + String(httpCode), "INFO");
     String response = http.getString();
-    Serial.println("Resposta: " + response);
+    debug.Println("enviarPost()", "Resposta HTTP: " + response, "INFO");    
     http.end();
   }
   else
   {
-    Serial.printf("Erro na requisição: %s\n", http.errorToString(httpCode).c_str());
+    String errorMessage = "Erro na requisição: " + String(http.errorToString(httpCode).c_str());
+    debug.Println("enviarPost()", errorMessage , "INFO");
   }
-
-  
 }
 
 /*---------------------------------------------------------------------------------------- */
+
+void MontaRegistros(uint8_t event_id, CardRFID idCard){
+
+  debug.Println("xTask_ModeMaster", "Efetuando registros Event_id : " + String(event_id), "WARN");
+  if (event_id == EventID_IDOK_MAOS_OK){
+     vTaskDelay(10);  //não faz nada por enquanto
+  }else if (event_id == EventID_IDOK_MAOS_NOK){
+    vTaskDelay(10);//não faz nada por enquanto  
+    }
+  else if (event_id == EventID_NIVELDISPENSER){
+    vTaskDelay(10);//não faz nada por enquanto
+  }  
+
+};
+
+
+
+
+
+
+
 
 // programa antigo
 /*
@@ -747,3 +783,4 @@ A0221AU_Serial.begin(9600,SERIAL_8N1,A0221AU_RX_Pin,A0221AU_TX_Pin);
   // Aguarda antes de verificar novamente
   vTaskDelay(100);
 */
+
