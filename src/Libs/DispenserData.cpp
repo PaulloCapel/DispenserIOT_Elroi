@@ -1,462 +1,349 @@
 #include <DispenserData.h>
 
-void DispenserData::begin()
+DispenserData::BufferReg DispenserData::Internal_BufferReg_RAM;
+DispenserData::Str_NetworkCfg DispenserData::Internal_NetworkCfg_RAM;
+DispenserData::DataTo_API DispenserData::Internal_Data_To_API;
+
+//------------------------------------funções padrões dos arquivos---------------------------------------//
+
+bool DispenserData::begin()
 {
 
-    if (!SPIFFS.begin(true))
+    // inicializa variavel internas da memoria ram
+
+    memset(&Internal_BufferReg_RAM, 0, sizeof(BufferReg));
+    memset(&Internal_NetworkCfg_RAM, 0, sizeof(Str_NetworkCfg));
+    memset(&Internal_Data_To_API, 0, sizeof(DataTo_API));
+
+    // inicializa LittleFS
+    if (!LittleFS.begin(true))
     {
-        debug.Println("DispenserData.Begin()", "Erro: Falha ao inicializar o SPIFFS", "ERROR");
-        return;
+        debug.Println("DispenserData.Begin()", "Falha ao montar LittleFS", "ERROR");
+        return false;
     }
 
-    File root = SPIFFS.open("/"); // Abre o "diretório" onde estão os arquivos na SPIFFS
-    if (!root)                    // Se houver falha ao abrir o "diretório", ...
+    // Obter o espaço total e usado em bytes
+    size_t total = LittleFS.totalBytes();
+    size_t used = LittleFS.usedBytes();
+    size_t free = total - used;
+
+    debug.Println("DispenserData.Begin()","Espaço Total LittleFS: " + String(total) + " bytes", "INFO");
+    debug.Println("DispenserData.Begin()","Espaço Usado LittleFS: " + String(used) + " bytes", "INFO");
+    debug.Println("DispenserData.Begin()","Espaço Livre LittleFS: " + String(free) + " bytes", "INFO");
+
+    // Verifica aquivos existentes
+    File root = LittleFS.open("/"); // Abre o "diretório" onde estão os arquivos
+    if (!root)                      // Se houver falha ao abrir o "diretório", ...
     {
         // informa ao usuário que houve falhas e sai da função retornando false.
-        debug.Println("DispenserData.Begin()", "falha ao abrir o diretório /data", "ERROR");
+        debug.Println("DispenserData.Begin()", "falha ao abrir o diretório LittleFS", "ERROR");
+        return false;
     }
-    File file = root.openNextFile(); // Relata o próximo arquivo do "diretório" e
 
-    int qtdFiles = 0; // variável que armazena a quantidade de arquivos que há no diretório informado.
+    File file = root.openNextFile(); // Relata o próximo arquivo do "diretório" e
+    int qtdFiles = 0;                // variável que armazena a quantidade de arquivos que há no diretório informado.
 
     while (file)
     { // Enquanto houver arquivos no "diretório" que não foram vistos,
-        debug.Print("DispenserData.Begin()", "  FILE : ", "INFO");
+        debug.Print("DispenserData.Begin()", " FILE : ", "INFO");
         debug.Print("DispenserData.Begin()", String(file.name()), "INFO"); // Imprime o nome do arquivo
         debug.Print("DispenserData.Begin()", "\tSIZE : ", "INFO");
         debug.Println("DispenserData.Begin()", String(file.size()), "INFO"); // Imprime o tamanho do arquivo
         qtdFiles++;                                                          // Incrementa a variável de quantidade de arquivos
         file = root.openNextFile();                                          // Relata o próximo arquivo do diretório e
     }
-    bool check_init = false;
-    if (qtdFiles == 0) // Se após a visualização de todos os arquivos do diretório
-                       //                      não houver algum arquivo, ...
+
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    
+    // faz a verificação se o arqquivo /buffer_reg.bin existe, ou se esta corrompido
+    bool File_BufferRegExist = LittleFS.exists(_filenameBuffer);
+    debug.Print("DispenserData.Begin()", "Arquivo /buffer_reg.bin existe ? ", "INFO");
+    debug.Println("DispenserData.Begin()", File_BufferRegExist ? "sim" : "nao", "INFO");
+    bool BackupSucess = false;
+    // verifica se o arquivo se existe faz backup para ram
+    if (File_BufferRegExist)
     {
-        // Avisa o usuário que não houve nenhum arquivo para ler e retorna false.
-        debug.Println("DispenserData.Begin()", "Nenhum arquivo encontrado", "WARN");
-        check_init = inicializaArquivos(); // chama função de inicialização de arquivos
-        debug.Print("DispenserData.Begin()", "Arquivos inicializados ? ", "INFO");
-        debug.Println("DispenserData.Begin()", check_init ? "Sim" : "Nao", "INFO");
+        BackupSucess = CopyFlash_To_InternalRAM();
+        debug.Print("DispenserData.Begin()", "Backup /buffer_reg.bin realizado ? ", "INFO");
+        debug.Println("DispenserData.Begin()", BackupSucess ? "sim" : "nao", "INFO");
     }
 
-    debug.Println("DispenserData.Begin()", "SPIFFS Inicializado", "INFO");
-}
-
-bool DispenserData::inicializaArquivos()
-{
-    // Inicializa ConfigReg
-    bool ConfigRegExist = SPIFFS.exists(_filenameConfig);
-    debug.Print("DispenserData.Begin()", "Arquivo /RegistroConfig.bin existe ? ", "INFO");
-    debug.Println("DispenserData.Begin()", ConfigRegExist ? "true" : "false", "INFO");
-
-    if (!ConfigRegExist)
+    // caso o arquivo não exista ou esteja corrompido ele cria um novo
+    if (!File_BufferRegExist || !BackupSucess)
     {
+        debug.Println("DispenserData.Begin()", "Criando arquivo /buffer_reg.bin", "WARN");
+        memset(&Internal_BufferReg_RAM, 0, sizeof(BufferReg));
 
-        ConfigReg config = {0, 0, 0, true, false}; // inicializa arquivo de configuração
-        File configFile = SPIFFS.open(_filenameConfig, FILE_WRITE);
-        if (configFile)
+        Internal_BufferReg_RAM.cfg.Assinatura = Ass_Storage; // assina o arquivo
+        Internal_BufferReg_RAM.cfg.IndiceAtual = 0;       // inicializa buffer vazio (-1 proxima casa é 0 ao ser incrementado)
+        Internal_BufferReg_RAM.cfg.ContagemDeDados = 0;
+        Internal_BufferReg_RAM.cfg.IndiceMaisAntigo = 0;
+
+        // 3. Cria e escreve arquivo de dados
+        File BufferRegFile = LittleFS.open(_filenameBuffer, FILE_WRITE);
+        if (!BufferRegFile)
         {
-            configFile.write(reinterpret_cast<const uint8_t *>(&config), sizeof(config));
-            configFile.close();
-            debug.Println("DispenserData.Begin()", "Arquivo /RegistroConfig.bin, criado com sucesso", "INFO");
-        }
-        else
-        {
-            debug.Println("DispenserData.Begin()", "Erro ao abrir /RegistroConfig.bin, ou arquivo corrompido", "WARN");
+            debug.Println("DispenserData.Begin()", "Erro ao criar /buffer_reg.bin", "ERROR");
+            BufferRegFile.close();
             return false;
         }
 
-        // Inicializa BufferRegistros
-        Registros *BufferRegistros = new Registros[BUFFER_SIZE]; // Usando memória dinâmica
-        memset(BufferRegistros, 0, sizeof(BufferRegistros));
+        size_t written_ = BufferRegFile.write(reinterpret_cast<const uint8_t *>(&Internal_BufferReg_RAM), sizeof(BufferReg));
+        BufferRegFile.close();
 
-        File dataFile = SPIFFS.open(_filenameData, FILE_WRITE);
-        if (dataFile)
+        if (written_ != sizeof(BufferReg))
         {
-            dataFile.write(reinterpret_cast<const uint8_t *>(BufferRegistros), sizeof(BufferRegistros));
-            dataFile.close();
-            debug.Println("DispenserData.Begin()", "Arquivo /Registros.bin, criado com sucesso", "INFO");
-            delete[] BufferRegistros; // Liberar memória antes de retornar
-        }
-        else
-        {
-            debug.Println("DispenserData.Begin()", "Erro ao criar arquivo /Registros.bin ", "WARN");
-            delete[] BufferRegistros; // Liberar memória antes de retornar
+            debug.Println("DispenserData.Begin()", "Escrita incompleta em /buffer_reg.bin", "ERROR");
+            BufferRegFile.close();
+            LittleFS.remove(_filenameBuffer);
             return false;
         }
 
-        debug.Println("DispenserData.Begin()", "=== Configuração Atual ===", "INFO");
-        debug.Println("DispenserData.Begin()", "Indice Atual: " + String(config.IndiceAtual), "INFO");
-        debug.Println("DispenserData.Begin()", "Indice Mais Antigo: " + String(config.IndiceMaisAntigo), "INFO");
-        debug.Print("DispenserData.Begin()", "Buffer Circular Ativo: ", "INFO");
-        debug.Println("DispenserData.Begin()", config.BufferCircularAtivo ? "Sim" : "Não", "INFO");
-        debug.Print("DispenserData.Begin()", "Dados de configuração inicializado ? ", "INFO");
-        debug.Println("DispenserData.Begin()", config.Inicializado ? "Sim" : "Não", "INFO");
-        debug.Println("DispenserData.Begin()", "==========================", "INFO");
+        // le o arquivo escrito e coleta assinatura
+        Internal_BufferReg_RAM.cfg.Assinatura = 0;
+        File BufferRegFile_ = LittleFS.open(_filenameBuffer, FILE_READ);
+        if (!BufferRegFile_)
+        {
+            debug.Println("DispenserData.Begin()", "Erro ao ler /buffer_reg.bin", "ERROR");
+            BufferRegFile_.close();
+            LittleFS.remove(_filenameBuffer);
+            return false;
+        }
+
+        // Lê os dados do arquivo e os armazena na estrutura _WifiDataDisp
+        BufferRegFile_.read(reinterpret_cast<uint8_t *>(&Internal_BufferReg_RAM), sizeof(BufferReg));
+        // Fecha o arquivo após a leitura
+        BufferRegFile_.close();
+        String assinaturaHex = String(Internal_BufferReg_RAM.cfg.Assinatura, HEX);
+        assinaturaHex.toUpperCase(); // Opcional: "FFABCDFF" em vez de "ffabcdff"
+        debug.Println("DispenserData.Begin()", "Assinatura do arquivo /buffer_reg.bin : 0x" + assinaturaHex, "INFO");
+
+        if (Internal_BufferReg_RAM.cfg.Assinatura != Ass_Storage)
+        {
+            debug.Println("DispenserData.Begin()", "A assinatura do arquivo lido, é diferente da assinatura interna", "ERROR");
+            LittleFS.remove(_filenameBuffer);
+            return false;
+        }
     }
 
-    // verifica se o arquivo de configurações do wifi existe
-    bool WifiConfigExist = SPIFFS.exists(_filenameWifiData);
-    debug.Print("DispenserData.Begin()", "Arquivo /WifiDataDisp.bin existe ? ", "INFO");
-    debug.Println("DispenserData.Begin()", WifiConfigExist ? "true" : "false", "INFO");
-    if (!WifiConfigExist)
-    {
-        WifiDataDisp _WifiDataDisp;
-        memset(&_WifiDataDisp, 0, sizeof(WifiDataDisp));
-        _WifiDataDisp.Mode = 0; // inicializa em 0 demonstrando que o portal não foi configurado
+    // verifica se existe o arquivo de configuração wifi, se nao cria ele.
+    bool File_WifiConfigExist = LittleFS.exists(_filenameNetworkCfg);
+    debug.Print("DispenserData.Begin()", "Arquivo /network_cfg.bin existe ? ", "INFO");
+    debug.Println("DispenserData.Begin()", File_WifiConfigExist ? "sim" : "nao", "INFO");
+    bool WifiConfigFileCorrupt = false;
 
-        File _WifiDataDispFile = SPIFFS.open(_filenameWifiData, FILE_WRITE);
-        if (_WifiDataDispFile)
+    // caso exista verifica se não está corrompido
+    if (File_WifiConfigExist)
+    {
+        memset(&Internal_NetworkCfg_RAM, 0, sizeof(Str_NetworkCfg));
+
+        File _WifiDataDispFile = LittleFS.open(_filenameNetworkCfg, FILE_READ);
+        if (!_WifiDataDispFile)
         {
-            _WifiDataDispFile.write(reinterpret_cast<const uint8_t *>(&_WifiDataDisp), sizeof(_WifiDataDisp));
+            debug.Println("DispenserData.Begin()", "Erro ao abrir arquivo /network_cfg.bin ", "ERROR");
+            LittleFS.remove(_filenameNetworkCfg);
+            WifiConfigFileCorrupt = true;
+        }
+        else
+        {
+            
+            _WifiDataDispFile.read(reinterpret_cast<uint8_t *>(&Internal_NetworkCfg_RAM), sizeof(Str_NetworkCfg));
             _WifiDataDispFile.close();
-            debug.Println("DispenserData.Begin()", "Arquivo /WifiDataDisp.bin, criado com sucesso", "INFO");
+
+            if (Internal_NetworkCfg_RAM.Assinatura != Ass_Storage)
+            {
+                debug.Println("DispenserData.Begin()", "Arquivo /network_cfg.bin corrompido, impossível fazer backup", "ERROR");
+                LittleFS.remove(_filenameNetworkCfg);
+                WifiConfigFileCorrupt = true;
+            }
+            debug.Print("DispenserData.Begin()", "Backup /network_cfg.bin realizado ? ", "INFO");
+        debug.Println("DispenserData.Begin()", !WifiConfigFileCorrupt ? "sim" : "nao", "INFO");
         }
-        else
+    }
+
+    // cria o arquivo se necessário
+    if (!File_WifiConfigExist || WifiConfigFileCorrupt)
+    {
+        debug.Println("DispenserData.Begin()", "Criando novo /network_cfg.bin", "WARN");
+
+        
+        Internal_NetworkCfg_RAM.Assinatura = Ass_Storage;
+
+        File wifiFile = LittleFS.open(_filenameNetworkCfg, FILE_WRITE); // Alterado para modo "w"
+        if (!wifiFile)
         {
-            debug.Println("DispenserData.Begin()", "Erro ao abrir /WifiDataDisp.bin, ou arquivo corrompido", "WARN");
+            debug.Println("DispenserData.Begin()", "Erro ao criar /network_cfg.bin", "ERROR");
             return false;
         }
+
+        
+        size_t _written = wifiFile.write(reinterpret_cast<const uint8_t *>(&Internal_NetworkCfg_RAM), sizeof(Str_NetworkCfg));
+        wifiFile.flush();
+        wifiFile.close();
+
+        debug.Println("DispenserData.Begin()", "Dados escritos: " + String(_written), "INFO");
+
+        if (_written != sizeof(Str_NetworkCfg))
+        {
+            debug.Println("DispenserData.Begin()", "Escrita incompleta em /network_cfg.bin", "ERROR");
+            LittleFS.remove(_filenameNetworkCfg);
+            return false;
+        }
+
+        File _WifiDataDispFile = LittleFS.open(_filenameNetworkCfg, FILE_READ);
+        if (!_WifiDataDispFile)
+        {
+            debug.Println("DispenserData.Begin()", "Erro ao abrir arquivo /network_cfg.bin ", "ERROR");
+            LittleFS.remove(_filenameNetworkCfg);
+            WifiConfigFileCorrupt = true;
+        }
+        else
+        {
+            
+            _WifiDataDispFile.read(reinterpret_cast<uint8_t *>(&Internal_NetworkCfg_RAM), sizeof(Str_NetworkCfg));
+            _WifiDataDispFile.close();
+
+            debug.Println("DispenserData.Begin()", "Assinatura escrita WifiConfig : " + String(Internal_NetworkCfg_RAM.Assinatura), "ERROR");
+
+            if (Internal_NetworkCfg_RAM.Assinatura != Ass_Storage)
+            {
+                debug.Println("DispenserData.Begin()", "Arquivo /network_cfg.bin corrompido, impossível fazer backup", "ERROR");
+                Format();
+                return false;
+            }
+        }
+
+        debug.Println("DispenserData.Begin()", "Criado com sucesso /network_cfg.bin", "INFO");
+    }
+        /**/
+
+    vTaskDelay(100);
+
+    return true;
+}
+
+bool DispenserData::Format()
+{
+
+    debug.Println("FormatMyData()", "Formatando LittleFS", "INFO");
+    LittleFS.format();
+    return true;
+}
+
+bool DispenserData::CopyFlash_To_InternalRAM()
+{
+
+    File File_ = LittleFS.open(_filenameBuffer, FILE_READ);
+    if (!File_)
+    {
+        debug.Println("CopyFlash_To_InternalRAM()", "Erro ao ler /buffer_reg.bin", "ERROR");
+        return false;
+    }
+
+    // Lê os dados do arquivo e os armazena na estrutura _WifiDataDisp
+    File_.read(reinterpret_cast<uint8_t *>(&Internal_BufferReg_RAM), sizeof(BufferReg));
+    // Fecha o arquivo após a leitura
+    File_.close();
+
+    if (Internal_BufferReg_RAM.cfg.Assinatura != Ass_Storage)
+    {
+        debug.Println("CopyFlash_To_InternalRAM()", "Assinatura incorreta /buffer_reg.bin", "ERROR");
+        memset(&Internal_BufferReg_RAM, 0, sizeof(BufferReg));
+        return false;
     }
 
     return true;
 }
 
-void DispenserData::Put_NovoRegistro(uint8_t _hw_id[6], uint8_t _freepd, uint8_t _event, uint32_t _dataUser, uint32_t _timestamp)
+bool DispenserData::Clear_Registros_Flash()
 {
-    debug.Println("DispenserData.PutNovaPos()", "Adicionando novos dados na fila", "WARN");
-    // Lê o arquivo de configuração para obter o índice atual
-    ConfigReg config;
-    File configFile = SPIFFS.open(_filenameConfig, FILE_READ);
-    if (!configFile)
-    {
-        debug.Println("DispenserData.PutNovaPos()", "Erro ao abrir arquivo /RegistroConfig.bin ", "WARN");
-        return;
-    }
-    else
-    {
-        configFile.read(reinterpret_cast<uint8_t *>(&config), sizeof(ConfigReg));
-        configFile.close();
-    }
+    debug.Println("Clear_Registros_Flash", "Limpando /buffer_reg.bin", "WARN");
 
-    // Aloca memória dinamicamente para o buffer de registros
-    Registros *BufferRegistros = new Registros[BUFFER_SIZE]; // Usando memória dinâmica
+    BufferReg *BufferReg_Empty = new BufferReg;
     // zera variaveis da alocação dinamica do buffer
-    memset(BufferRegistros, 0, sizeof(Registros) * BUFFER_SIZE);
-    // abre aquivo de dados
-    File dataFile = SPIFFS.open(_filenameData, FILE_READ);
-    if (dataFile)
+    memset(BufferReg_Empty, 0, sizeof(BufferReg));
+    memset(&Internal_BufferReg_RAM, 0, sizeof(BufferReg));
+
+    // 3. Cria e escreve arquivo de dados
+    File BufferRegFile = LittleFS.open(_filenameBuffer, FILE_WRITE);
+    if (!BufferRegFile)
     {
-        dataFile.read(reinterpret_cast<uint8_t *>(BufferRegistros), sizeof(Registros) * BUFFER_SIZE);
-        dataFile.close();
-    }
-    else
-    {
-        debug.Println("DispenserData.PutNovaPos()", "Erro ao abrir /Registros.bin ", "WARN");
-        delete[] BufferRegistros; // Liberar memória antes de retornar
-        return;
-    }
-    delay(10);
-    // Verifica se o índice atingiu o limite e, caso positivo, ativa o buffer circular
-    if (config.IndiceAtual >= BUFFER_SIZE)
-    {
-        config.IndiceAtual = 0;                                                // Reinicia o índice para sobrescrever o início
-        config.BufferCircularAtivo = true;                                     // Define que o buffer está operando de forma circular
-        config.IndiceMaisAntigo = (config.IndiceMaisAntigo + 1) % BUFFER_SIZE; // Atualiza o índice mais antigo
-    }
-
-    // Atualiza o registro na posição indicada pelo índice atual
-    memcpy(BufferRegistros[config.IndiceAtual].hw_id, _hw_id, 6);
-    BufferRegistros[config.IndiceAtual].freepd = _freepd;
-    BufferRegistros[config.IndiceAtual].data = _dataUser;
-    BufferRegistros[config.IndiceAtual].event_id = _event;
-    BufferRegistros[config.IndiceAtual].timestamp = _timestamp;
-
-    // Incrementa o índice para a próxima posição, se necessário
-    config.IndiceAtual = (config.IndiceAtual + 1) % BUFFER_SIZE;
-
-    // Salva o buffer atualizado de volta no arquivo de dados
-    dataFile = SPIFFS.open(_filenameData, FILE_WRITE);
-    if (dataFile)
-    {
-        dataFile.write(reinterpret_cast<const uint8_t *>(BufferRegistros), sizeof(Registros) * BUFFER_SIZE);
-        dataFile.close();
-    }
-    else
-    {
-        debug.Println("DispenserData.PutNovaPos()", "Erro ao abrir /Registros.bin ", "WARN");
-        delete[] BufferRegistros; // Liberar memória antes de retornar
-        return;
-    }
-
-    // Salva a configuração atualizada no arquivo de configuração
-    configFile = SPIFFS.open(_filenameConfig, FILE_WRITE);
-    if (configFile)
-    {
-        configFile.write(reinterpret_cast<const uint8_t *>(&config), sizeof(ConfigReg));
-        configFile.close();
-    }
-    else
-    {
-        debug.Println("DispenserData.PutNovaPos()", "Erro ao abrir arquivo /RegistroConfig.bin ", "WARN");
-    }
-
-    debug.Println("DispenserData.PutNovaPos()", "=== Configuração Atual ===", "INFO");
-    debug.Println("DispenserData.PutNovaPos()", "Indice Atual: " + String(config.IndiceAtual), "INFO");
-    debug.Println("DispenserData.PutNovaPos()", "Indice Mais Antigo: " + String(config.IndiceMaisAntigo), "INFO");
-    debug.Print("DispenserData.PutNovaPos()", "Buffer Circular Ativo: ", "INFO");
-    debug.Println("DispenserData.PutNovaPos()", config.BufferCircularAtivo ? "Sim" : "Não", "INFO");
-    debug.Print("DispenserData.PutNovaPos()", "Dados de configuração inicializado ? ", "INFO");
-    debug.Println("DispenserData.PutNovaPos()", config.Inicializado ? "Sim" : "Não", "INFO");
-    debug.Println("DispenserData.PutNovaPos()", "==========================", "INFO");
-    //
-    int indiceParaImprimir = (config.IndiceAtual == 0) ? (BUFFER_SIZE - 1) : (config.IndiceAtual - 1);
-    String macAddress = "";
-    // Concatena os bytes em formato "XX:XX:XX:XX:XX:XX"
-    for (int i = 0; i < 6; i++)
-    {
-        if (i > 0)
-        {
-            macAddress += ":"; // Adiciona ":" entre os bytes
-        }
-        macAddress += String(BufferRegistros[indiceParaImprimir].hw_id[i], HEX); // Converte o byte para HEX
-    }
-    // Converte para maiúsculas
-    macAddress.toUpperCase();
-    debug.Println("DispenserData.PutNovaPos()", "=== Dados do Buffer ===", "INFO");
-
-    debug.Print("DispenserData.PutNovaPos()", " || Hardware Id : " + macAddress, "INFO");
-    debug.Print("DispenserData.PutNovaPos()", " || Event : " + String(BufferRegistros[indiceParaImprimir].event_id), "INFO");
-    debug.Print("DispenserData.PutNovaPos()", " || Data : " + String(BufferRegistros[indiceParaImprimir].data), "INFO");
-    debug.Println("DispenserData.PutNovaPos()", " || TimeStamp : " + String(BufferRegistros[indiceParaImprimir].timestamp), "INFO");
-    debug.Println("DispenserData.PutNovaPos()", "=======================", "INFO");
-
-    // Libera a memória alocada após o uso
-    delete[] BufferRegistros; // Liberar memória antes de retornar
-    debug.Print("DispenserData.PutNovaPos()", "Dados Adicionados com sucesso", "WARN");
-}
-
-DispenserData::Registros DispenserData::Get_RegistroMaisAntigo()
-{
-    debug.Println("DispenserData.GetPosAntiga()", "Retirando dados da fila", "WARN");
-    // Variáveis temporárias
-    ConfigReg config;
-
-    // Ler a configuração do arquivo _filenameConfig
-    File configFile = SPIFFS.open(_filenameConfig, FILE_READ);
-    if (!configFile)
-    {
-        debug.Println("DispenserData.GetPosAntiga()", "Erro ao abrir arquivo /RegistroConfig.bin ", "WARN");
-        return {}; // Retorna um registro vazio em caso de erro
-    }
-    configFile.read(reinterpret_cast<uint8_t *>(&config), sizeof(ConfigReg));
-    configFile.close();
-
-    if (config.IndiceAtual > 0)
-    {
-        Registros *BufferRegistros = new Registros[BUFFER_SIZE]; // Usando memória dinâmica
-        // zera variaveis da alocação dinamica do buffer
-        memset(BufferRegistros, 0, sizeof(Registros) * BUFFER_SIZE);
-        Registros posicaoMaisAntiga; // Registro mais antigo para retornar
-        // Ler o buffer do arquivo _filenameData
-        File dataFile = SPIFFS.open(_filenameData, FILE_READ);
-        if (!dataFile)
-        {
-            debug.Println("DispenserData.GetPosAntiga()", "Erro ao abrir /Registros.bin ", "WARN");
-            delete[] BufferRegistros; // Liberar memória antes de retornar
-            return {};                // Retorna um registro vazio em caso de erro
-        }
-        dataFile.read(reinterpret_cast<uint8_t *>(BufferRegistros), sizeof(Registros) * BUFFER_SIZE);
-        dataFile.close();
-
-        // Armazenar a posição mais antiga
-        posicaoMaisAntiga = BufferRegistros[config.IndiceMaisAntigo];
-
-        // Verifica se o buffer está operando de forma circular
-        if (config.BufferCircularAtivo)
-        {
-            // Limpar a posição de dados removida no buffer circular
-            memset(&BufferRegistros[config.IndiceMaisAntigo], 0, sizeof(Registros));
-
-            // Avançar o índice de leitura (retirar o dado mais antigo)
-            config.IndiceMaisAntigo = (config.IndiceMaisAntigo + 1) % BUFFER_SIZE;
-            if (config.IndiceMaisAntigo = 0)
-            {
-                config.BufferCircularAtivo = false;
-            }
-        }
-        else
-        {
-            // Modo não circular: deslocar o buffer
-            for (size_t i = config.IndiceMaisAntigo; i < config.IndiceAtual - 1; ++i)
-            {
-                BufferRegistros[i] = BufferRegistros[i + 1];
-            }
-
-            // Limpar a última posição do buffer
-            memset(&BufferRegistros[config.IndiceAtual - 1], 0, sizeof(Registros));
-
-            // Atualizar os índices
-            config.IndiceAtual--; // Reduz a contagem do buffer
-        }
-
-        // Escrever o buffer atualizado no arquivo _filenameData
-        dataFile = SPIFFS.open(_filenameData, FILE_WRITE);
-        if (!dataFile)
-        {
-            debug.Println("DispenserData.GetPosAntiga()", "Erro ao abrir /Registros.bin ", "WARN");
-        }
-        else
-        {
-            dataFile.write(reinterpret_cast<const uint8_t *>(BufferRegistros), sizeof(Registros) * BUFFER_SIZE);
-            dataFile.close();
-        }
-
-        // Atualizar a configuração no arquivo _filenameConfig
-        configFile = SPIFFS.open(_filenameConfig, FILE_WRITE);
-        if (!configFile)
-        {
-            debug.Println("DispenserData.GetPosAntiga()", "Erro ao abrir arquivo /RegistroConfig.bin ", "WARN");
-        }
-        else
-        {
-            configFile.write(reinterpret_cast<const uint8_t *>(&config), sizeof(ConfigReg));
-            configFile.close();
-        }
-
-        // Liberar memória antes de retornar
-        delete[] BufferRegistros;
-
-        debug.Println("DispenserData.PutNovaPos()", "=== Configuração Atual ===", "INFO");
-        debug.Println("DispenserData.PutNovaPos()", "Indice Atual: " + String(config.IndiceAtual), "INFO");
-        debug.Println("DispenserData.PutNovaPos()", "Indice Mais Antigo: " + String(config.IndiceMaisAntigo), "INFO");
-        debug.Print("DispenserData.PutNovaPos()", "Buffer Circular Ativo: ", "INFO");
-        debug.Println("DispenserData.PutNovaPos()", config.BufferCircularAtivo ? "Sim" : "Não", "INFO");
-        debug.Print("DispenserData.PutNovaPos()", "Dados de configuração inicializado ? ", "INFO");
-        debug.Println("DispenserData.PutNovaPos()", config.Inicializado ? "Sim" : "Não", "INFO");
-        debug.Println("DispenserData.PutNovaPos()", "==========================", "INFO");
-        //
-        int indiceParaImprimir = (config.IndiceAtual == 0) ? (BUFFER_SIZE - 1) : (config.IndiceAtual - 1);
-        String macAddress = "";
-        // Concatena os bytes em formato "XX:XX:XX:XX:XX:XX"
-        for (int i = 0; i < 6; i++)
-        {
-            if (i > 0)
-            {
-                macAddress += ":"; // Adiciona ":" entre os bytes
-            }
-            macAddress += String(BufferRegistros[indiceParaImprimir].hw_id[i], HEX); // Converte o byte para HEX
-        }
-        // Converte para maiúsculas
-        macAddress.toUpperCase();
-        debug.Println("DispenserData.PutNovaPos()", "=== Dados do Buffer ===", "INFO");
-
-        debug.Print("DispenserData.PutNovaPos()", " || Hardware Id : " + macAddress, "INFO");
-        debug.Print("DispenserData.PutNovaPos()", " || Event : " + String(BufferRegistros[indiceParaImprimir].event_id), "INFO");
-        debug.Print("DispenserData.PutNovaPos()", " || Data : " + String(BufferRegistros[indiceParaImprimir].data), "INFO");
-        debug.Println("DispenserData.PutNovaPos()", " || TimeStamp : " + String(BufferRegistros[indiceParaImprimir].timestamp), "INFO");
-        debug.Println("DispenserData.PutNovaPos()", "=======================", "INFO");
-
-        debug.Println("DispenserData.GetPosAntiga()", "Dados da fila retirados", "WARN");
-        // Retornar o registro mais antigo
-        return posicaoMaisAntiga;
-    }
-    else
-    {
-        debug.Println("DispenserData.GetPosAntiga()", "Buffer vazio, nenhum dado a ser retornado", "WARN");
-        return {};
-    }
-}
-
-DispenserData::ConfigReg DispenserData::Read_ConfigBuffer()
-{
-
-    ConfigReg config;
-
-    debug.Println("DispenserData.VerificaBuffer()", "Coletando dados de configuraçoes do buffer", "WARN");
-    // Lê o arquivo de configuração para obter o índice atual
-    File configFile = SPIFFS.open(_filenameConfig, FILE_READ);
-    if (!configFile)
-    {
-        debug.Println("DispenserData.VerificaBuffer()", "Erro ao abrir arquivo /RegistroConfig.bin ", "WARN");
-        return {};
-    }
-    else
-    {
-        configFile.read(reinterpret_cast<uint8_t *>(&config), sizeof(ConfigReg));
-        configFile.close();
-        return config;
-        debug.Println("DispenserData.VerificaBuffer()", "Dados coletados", "WARN");
-    }
-}
-
-bool DispenserData::Clear_Registros()
-{
-    debug.Println("DispenserData.Clear_Registros()", "Limpando /RegistroConfig.bin | /Registros.bin", "WARN");
-    // Cria buffers zerados diretamente
-    Registros *bufferZerado = new Registros[BUFFER_SIZE]; // Usando memória dinâmica
-    // zera variaveis da alocação dinamica do buffer
-    memset(bufferZerado, 0, sizeof(Registros) * BUFFER_SIZE);
-
-    ConfigReg config = {0, 0, 0, true, false}; // Índice e posição zerados, dados OK
-
-    // Abre o arquivo de dados e limpa o conteúdo
-    File dataFile = SPIFFS.open(_filenameData, FILE_WRITE);
-    if (!dataFile)
-    {
-        debug.Println("DispenserData.Clear_Registros()", "Erro ao abrir /Registros.bin ", "WARN");
-        delete[] bufferZerado;
+        debug.Println("Clear_Registros_Flash", "Erro ao criar /buffer_reg.bin", "ERROR");
+        LittleFS.remove(_filenameBuffer);
+        delete BufferReg_Empty;
         return false;
     }
-    else
-    {
-        dataFile.write(reinterpret_cast<const uint8_t *>(bufferZerado), sizeof(bufferZerado));
-        dataFile.close();
-    }
 
-    // Atualiza o arquivo de configuração
-    File configFile = SPIFFS.open(_filenameConfig, FILE_WRITE);
-    if (!configFile)
+    size_t bufferSize = sizeof(BufferReg_Empty);
+    size_t written_ = BufferRegFile.write(reinterpret_cast<const uint8_t *>(BufferReg_Empty), bufferSize);
+    BufferRegFile.close();
+
+    if (written_ != bufferSize)
     {
-        debug.Println("DispenserData.Clear_Registros()", "Erro ao abrir arquivo /RegistroConfig.bin ", "WARN");
-        delete[] bufferZerado;
+        debug.Println("Clear_Registros_Flash", "Escrita incompleta em /buffer_reg.bin", "ERROR");
+        LittleFS.remove(_filenameBuffer);
+        delete BufferReg_Empty;
         return false;
     }
-    else
-    {
-        configFile.write(reinterpret_cast<const uint8_t *>(&config), sizeof(ConfigReg));
-        configFile.close();
-    }
 
-    debug.Println("DispenserData.Clear_Registros()", "Arquivos /RegistroConfig.bin | /Registros.bin  limpos", "WARN");
-    delete[] bufferZerado;
+    delete BufferReg_Empty;
     return true;
 }
 
-//---------------------------funções relacionadas a manipulação dos dados do wifi --------------------------//
+void DispenserData::CopyInternalRam_To_Flash(){
+     // 3. Cria e escreve arquivo de dados
+     File BufferRegFile = LittleFS.open(_filenameBuffer, FILE_WRITE);
+     if (!BufferRegFile)
+     {
+         debug.Println("CopyInternalRam_To_Flash", "Erro ao criar /buffer_reg.bin", "ERROR");
+         BufferRegFile.close();
+         return;
+         
+     }
 
-bool DispenserData::Clear_WifiConfig()
+     size_t written_ = BufferRegFile.write(reinterpret_cast<const uint8_t *>(&Internal_BufferReg_RAM), sizeof(BufferReg));
+     BufferRegFile.close();
+
+     if (written_ != sizeof(BufferReg))
+     {
+         debug.Println("CopyInternalRam_To_Flash", "Escrita incompleta em /buffer_reg.bin", "ERROR");
+         BufferRegFile.close();
+         LittleFS.remove(_filenameBuffer);
+         return;
+        
+     }
+     debug.Println("CopyInternalRam_To_Flash", "Dadso salvo na flash com sucesso", "ERROR");
+}
+
+
+//-------------------------------------------------------------------------------------------------------//
+
+//------------------------funções relacionadas a manipulação dos dados do wifi --------------------------//
+
+bool DispenserData::Clear_NetworkCfg()
 {
-    // Registra um log indicando que o arquivo /WifiDataDisp.bin está sendo limpo
-    debug.Println("DispenserData.Clear_WifiConfig()", "Limpando arquivo /WifiDataDisp.bin ", "WARN");
+    // Registra um log indicando que o arquivo /network_cfg.bin está sendo limpo
+    debug.Println("Clear_WifiConfig()", "Limpando arquivo /network_cfg.bin ", "WARN");
 
-    // Cria uma estrutura para armazenar os dados lidos do arquivo, inicializada com zero
-    WifiDataDisp _WifiDataDisp = {};
+    memset(&Internal_NetworkCfg_RAM, 0, sizeof(Str_NetworkCfg));
+    Internal_NetworkCfg_RAM.Mode = 0;
+    Internal_NetworkCfg_RAM.Assinatura = Ass_Storage;
 
-    // Tenta abrir o arquivo /WifiDataDisp.bin para escrita no SPIFFS
-    File _WifiDataDispFile = SPIFFS.open(_filenameWifiData, FILE_WRITE);
+    // Tenta abrir o arquivo /network_cfg.bin para escrita no littlefs
+    File _WifiDataDispFile = LittleFS.open(_filenameNetworkCfg, FILE_WRITE);
 
     // Verifica se o arquivo foi aberto com sucesso
     if (_WifiDataDispFile)
     {
         // Escreve a estrutura _WifiDataDisp no arquivo
-        _WifiDataDispFile.write(reinterpret_cast<const uint8_t *>(&_WifiDataDisp), sizeof(_WifiDataDisp));
+        _WifiDataDispFile.write(reinterpret_cast<const uint8_t *>(&Internal_NetworkCfg_RAM), sizeof(Str_NetworkCfg));
 
         // Fecha o arquivo
         _WifiDataDispFile.close();
 
         // Registra um log indicando que o arquivo foi criado com sucesso
-        debug.Println("DispenserData.Clear_WifiConfig()", "Arquivo /WifiDataDisp.bin, criado com sucesso", "INFO");
+        debug.Println("Clear_WifiConfig()", "Arquivo /network_cfg.bin, criado com sucesso", "INFO");
 
         // Retorna true indicando que a operação foi bem-sucedida
         return true;
@@ -464,73 +351,163 @@ bool DispenserData::Clear_WifiConfig()
     else
     {
         // Caso o arquivo não possa ser aberto, registra um log de erro
-        debug.Println("DispenserData.Clear_WifiConfig()", "Erro ao abrir /WifiDataDisp.bin, ou arquivo corrompido", "WARN");
+        debug.Println("Clear_WifiConfig()", "Erro ao abrir /network_cfg.bin, ou arquivo corrompido", "WARN");
 
         // Retorna false indicando que a operação falhou
         return false;
     }
 }
 
-DispenserData::WifiDataDisp DispenserData::Read_WifiDataDisp()
+bool DispenserData::Write_NetworkCfg_To_Flash(const std::string &_Ssid, const std::string &_Pass, uint8_t _Mode, uint16_t _SyncTime, uint16_t _MasterAddress)
 {
-    // Registra um log indicando que o arquivo /WifiDataDisp.bin está sendo limpo
-    debug.Println("DispenserData.Read_WifiDataDisp()", "Lendo em /WifiDataDisp.bin ", "INFO");
-    // Cria uma estrutura para armazenar os dados lidos do arquivo, inicializada com zero
-    WifiDataDisp _WifiDataDisp = {};
-
-    // Tenta abrir o arquivo /WifiDataDisp.bin para leitura no SPIFFS
-    File _WifiDataDispFile = SPIFFS.open(_filenameWifiData, FILE_READ);
-
-    // Verifica se o arquivo foi aberto corretamente
-    if (!_WifiDataDispFile)
-    {
-        // Caso o arquivo não possa ser aberto, registra um log de erro
-        debug.Println("DispenserData.Read_WifiDataDisp()", "Erro ao abrir arquivo /WifiDataDisp.bin ", "ERROR");
-
-        // Retorna uma estrutura vazia (com todos os campos zero) indicando que houve erro na leitura
-        return {};
-    }
-    else
-    {
-        // Lê os dados do arquivo e os armazena na estrutura _WifiDataDisp
-        _WifiDataDispFile.read(reinterpret_cast<uint8_t *>(&_WifiDataDisp), sizeof(_WifiDataDisp));
-
-        // Fecha o arquivo após a leitura
-        _WifiDataDispFile.close();
-
-        // Registra um log indicando que os dados foram coletados com sucesso
-        debug.Println("DispenserData.Read_WifiDataDisp()", "Dados coletados /WifiDataDisp.bin ", "INFO");
-
-        // Retorna a estrutura com os dados lidos do arquivo
-        return _WifiDataDisp;
-    }
-}
-
-void DispenserData::Write_WifiDataDisp(const std::string &_Ssid, const std::string &_Pass, uint8_t _Mode, uint16_t _SyncTime)
-{
-    WifiDataDisp _WifiDataDisp = {};
-
+    
     // Copia o SSID para a estrutura, garantindo que não ultrapasse o tamanho do buffer
-    strncpy(_WifiDataDisp.Ssid, _Ssid.c_str(), sizeof(_WifiDataDisp.Ssid) - 1);
-    _WifiDataDisp.Ssid[sizeof(_WifiDataDisp.Ssid) - 1] = '\0'; // Garante terminação correta
+    strncpy(Internal_NetworkCfg_RAM.Ssid, _Ssid.c_str(), sizeof(Internal_NetworkCfg_RAM.Ssid) - 1);
+    Internal_NetworkCfg_RAM.Ssid[sizeof(Internal_NetworkCfg_RAM.Ssid) - 1] = '\0'; // Garante terminação correta
 
     // Copia a senha para a estrutura, garantindo que não ultrapasse o tamanho do buffer
-    strncpy(_WifiDataDisp.Pass, _Pass.c_str(), sizeof(_WifiDataDisp.Pass) - 1);
-    _WifiDataDisp.Pass[sizeof(_WifiDataDisp.Pass) - 1] = '\0';
+    strncpy(Internal_NetworkCfg_RAM.Pass, _Pass.c_str(), sizeof(Internal_NetworkCfg_RAM.Pass) - 1);
+    Internal_NetworkCfg_RAM.Pass[sizeof(Internal_NetworkCfg_RAM.Pass) - 1] = '\0';
 
-    _WifiDataDisp.Mode = _Mode;
-    _WifiDataDisp.SyncTime = _SyncTime;
+    Internal_NetworkCfg_RAM.Mode = _Mode;
+    Internal_NetworkCfg_RAM.SyncTime = _SyncTime;
+    Internal_NetworkCfg_RAM.Assinatura = Ass_Storage;
 
-    File _WifiDataDispFile = SPIFFS.open(_filenameWifiData, FILE_WRITE);
-    if (_WifiDataDispFile)
+        File wifiFile = LittleFS.open(_filenameNetworkCfg, FILE_WRITE); // Alterado para modo "w"
+        if (!wifiFile)
+        {
+            debug.Println("Write_NetworkCfg_To_Flash", "Erro ao criar /cfg_wifi.bin", "ERROR");
+            return false;
+        }
+
+        
+        size_t _written = wifiFile.write(reinterpret_cast<const uint8_t *>(&Internal_NetworkCfg_RAM), sizeof(Str_NetworkCfg));
+        wifiFile.flush();
+        wifiFile.close();
+
+        debug.Println("Write_NetworkCfg_To_Flash", "Dados escritos: " + String(_written), "INFO");
+
+        if (_written != sizeof(Str_NetworkCfg))
+        {
+            debug.Println("Write_NetworkCfg_To_Flash", "Escrita incompleta em /cfg_wifi.bin", "ERROR");
+            LittleFS.remove(_filenameNetworkCfg);
+            return false;
+        }
+ return true;
+}
+
+DispenserData::Str_NetworkCfg DispenserData::Read_NetworkCfg_From_Ram()
+{
+    return Internal_NetworkCfg_RAM;
+}
+
+//-------------------------------------------------------------------------------------------------------//
+
+//----------funções relacionadas a manipulação dos dados dos registros na memoria ram--------------------//
+
+DispenserData::ConfigReg DispenserData::Read_ConfigBuffer_From_Ram()
+{
+
+    return Internal_BufferReg_RAM.cfg;
+}
+
+// Função para adicionar registros ao buffer
+bool DispenserData::Put_Registros(Registros _Registros_To_Buffer)
+{
+    // Se o buffer está cheio (modo circular)
+    if (Internal_BufferReg_RAM.cfg.ContagemDeDados == BUFFER_SIZE)
     {
-        _WifiDataDispFile.write(reinterpret_cast<const uint8_t *>(&_WifiDataDisp), sizeof(_WifiDataDisp));
-        _WifiDataDispFile.close();
-        debug.Println("DispenserData.Write_WifiDataDisp()", "Escrita /WifiDataDisp.bin realizada com sucesso", "INFO");
+        // Sobrescreve o registro mais antigo
+        Internal_BufferReg_RAM.cfg.IndiceMaisAntigo =
+            (Internal_BufferReg_RAM.cfg.IndiceMaisAntigo + 1) % BUFFER_SIZE;
     }
     else
     {
-        debug.Println("DispenserData.Write_WifiDataDisp()", "Erro ao abrir /WifiDataDisp.bin ou arquivo corrompido", "ERROR");
+        // Atualiza contagem se não está cheio
+        Internal_BufferReg_RAM.cfg.ContagemDeDados++;
+    }
+
+    // Insere o novo registro // ISSO AQUI ABAIXO PASSA PARA TEPOIS DO SOMATORIO, ABAIXO.
+    Internal_BufferReg_RAM.data[Internal_BufferReg_RAM.cfg.IndiceAtual] = _Registros_To_Buffer;
+
+    // Atualiza índice próximo com wrapping
+    Internal_BufferReg_RAM.cfg.IndiceAtual =(Internal_BufferReg_RAM.cfg.IndiceAtual + 1) % BUFFER_SIZE;
+
+    return true;
+}
+
+DispenserData::DataTo_API DispenserData::Get_Data_To_API()
+{
+
+    if (Internal_BufferReg_RAM.cfg.ContagemDeDados > BUFFER_API_SIZE)
+    {
+        memset(&Internal_Data_To_API, 0, sizeof(DispenserData::DataTo_API));
+        size_t elementos_para_coletar = 0;
+
+        // Determina quantos elementos podemos coletar (máximo BUFFER_API_SIZE)
+        elementos_para_coletar = (Internal_BufferReg_RAM.cfg.ContagemDeDados > BUFFER_API_SIZE)
+                                     ? BUFFER_API_SIZE
+                                     : Internal_BufferReg_RAM.cfg.ContagemDeDados;
+
+        // Copia os registros mais antigos para o buffer da API
+        for (size_t i = 0; i < elementos_para_coletar; i++)
+        {
+            size_t current_idx = (Internal_BufferReg_RAM.cfg.IndiceMaisAntigo + i) % BUFFER_SIZE;
+            Internal_Data_To_API.data[i] = Internal_BufferReg_RAM.data[current_idx];
+        }
+
+        // Atualiza buffer após coleta
+        if (elementos_para_coletar > 0)
+        {
+            // Atualiza índice mais antigo
+            Internal_BufferReg_RAM.cfg.IndiceMaisAntigo =
+                (Internal_BufferReg_RAM.cfg.IndiceMaisAntigo + elementos_para_coletar) % BUFFER_SIZE;
+
+            // Atualiza contagem
+            Internal_BufferReg_RAM.cfg.ContagemDeDados -= elementos_para_coletar;
+        }
+
+        return Internal_Data_To_API;
+    }
+    else
+    {
+        return {};
     }
 }
 
+bool DispenserData::Put_Registros_From_API(DataTo_API _Data_To_API)
+{
+    // Copia os dados para a variável estática (evita destruição após a função)
+    Internal_Data_To_API = _Data_To_API;
+
+    // Verifica se há espaço suficiente OU se o buffer está em modo circular
+    if (Internal_BufferReg_RAM.cfg.ContagemDeDados + BUFFER_API_SIZE > BUFFER_SIZE)
+    {
+        // Calcula quantos elementos serão sobrescritos
+        size_t elementos_a_sobrescrever = Internal_BufferReg_RAM.cfg.ContagemDeDados + BUFFER_API_SIZE - BUFFER_SIZE;
+
+        // Atualiza o índice mais antigo (remove os elementos mais velhos que serão sobrescritos)
+        Internal_BufferReg_RAM.cfg.IndiceMaisAntigo =
+            (Internal_BufferReg_RAM.cfg.IndiceMaisAntigo + elementos_a_sobrescrever) % BUFFER_SIZE;
+
+        // Atualiza a contagem (buffer permanecerá cheio)
+        Internal_BufferReg_RAM.cfg.ContagemDeDados = BUFFER_SIZE;
+    }
+    else
+    {
+        // Atualiza a contagem normalmente
+        Internal_BufferReg_RAM.cfg.ContagemDeDados += BUFFER_API_SIZE;
+    }
+
+    // Insere os 16 registros no buffer
+    for (size_t i = 0; i < BUFFER_API_SIZE; i++)
+    {
+        Internal_BufferReg_RAM.data[Internal_BufferReg_RAM.cfg.IndiceAtual] = Internal_Data_To_API.data[i];
+        Internal_BufferReg_RAM.cfg.IndiceAtual =
+            (Internal_BufferReg_RAM.cfg.IndiceAtual + 1) % BUFFER_SIZE;
+    }
+
+    return true;
+}
+
+//-------------------------------------------------------------------------------------------------------//

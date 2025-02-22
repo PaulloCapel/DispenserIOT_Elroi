@@ -41,20 +41,22 @@ bool AtualizaTime = false;
 
 // structs do processo
 
-DispenserData::Registros _RegistrosTemp;
-DispenserData::ConfigReg _ConfigRegTemp;
-DispenserData::WifiDataDisp _WifiDataTemp;
+DispenserData::Str_NetworkCfg App_NetworkConfig;
+DispenserData::ConfigReg App_Cfg_Registros;
+DispenserData::DataTo_API App_Registro_To_API;
+DispenserData::Registros App_Registro_To_Buffer;
 
 // eventos de processo 1 até 100
 
-uint8_t EventID_NIVELDISPENSER = 10; // medição do fluido do reservatorio
-uint8_t EventID_IDOK_MAOS_OK = 11;   // detectou o cartão e detectou as maos
-uint8_t EventID_IDOK_MAOS_NOK = 12;  // detectou o carão mas houve timeout de aguardo das maos
+uint8_t EventID_NIVELDISPENSER = 10;            // medição do fluido do reservatorio
+uint8_t EventID_IDOK_MAOS_OK = 11;              // detectou o cartão e detectou as maos
+uint8_t EventID_IDOK_MAOS_NOK = 12;             // detectou o cartão mas houve timeout de aguardo das maos
 
 // eventos de erro hardware 195 - 225
-uint8_t EventID_HW_PN532_ERROR = 200;   // erro no modulo PN532 RFID
-uint8_t EventID_HW_A0221AU_ERROR = 201; // erro no modulo A0221AU MEDIDOR DE DISTANCIA
-uint8_t EventID_HW_RADIOE32EBYTE_ERROR = 202; // erro no modulo E32 91520D EBYTE
+
+uint8_t EventID_HW_PN532_ERROR = 200;           // erro no modulo PN532 RFID
+uint8_t EventID_HW_A0221AU_ERROR = 201;         // erro no modulo A0221AU MEDIDOR DE DISTANCIA
+uint8_t EventID_HW_RADIOE32EBYTE_ERROR = 202;   // erro no modulo E32 91520D EBYTE
 
 // eventos de erro software 226 - 255
 

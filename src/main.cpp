@@ -11,6 +11,7 @@ bool _WifiConnect();
 uint32_t getUnixTime();
 String macToString(const uint8_t *mac);
 CardRFID NFC_Check();
+String MontaJson_To_API(DispenserData::DataTo_API _DataTo_API, size_t size_data_api);
 
 // --------------------------------------------------------------------------------------------------
 
@@ -35,10 +36,14 @@ Adafruit_PN532 nfc(PN532_SDA, PN532_SLC);
 //-------------------------------INSTANCIAS DE LIBS PROPRIAS----------------------------------------
 
 myDebug debug(true); // cria instancia para lib de debug serial
-DispenserData MyDataDispenser(debug); // cria instancia dados SPIFFS, e repassa  instancia do debug compartilhada
-WifiPortal MyPortalConfig(debug, MyDataDispenser); // cria instancia do portal, e repassa  instancia do debug compartilhada
 A041SK DetectorDeMaos(30, 100, S_DetectorPin);
 // RV1_Timer PotenciometroTemporizador(1000, 5000, S_TemporizadorPin);
+
+DispenserData DispenserStrorage(debug); // cria instancia dados LittleFS, e repassa  instancia do debug compartilhada
+WifiPortal MyPortalConfig(debug, DispenserStrorage); // cria instancia do portal, e repassa  instancia do debug compartilhada
+
+
+
 
 // ----------------------------------------------------------------------------------------------
 
@@ -62,8 +67,29 @@ void setup()
   xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM1Hz); // da um sinal de vida
 
   debug.Println("SETUP", "Inicializando Sistemas de arquivos do sistema", "WARN");
-  MyDataDispenser.begin();
-  vTaskDelay(pdMS_TO_TICKS(100));
+  bool StrorageInicialization = DispenserStrorage.begin();  
+  if (StrorageInicialization)
+  {
+    debug.Println("SETUP", "Sistemas de arquivos inicializados", "WARN");
+  }
+  else
+  {
+    debug.Println("SETUP", "Sistemas de arquivos corrompidos", "WARN");
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    debug.Println("SETUP", "Formatando LittleFS", "WARN");    
+    if (DispenserStrorage.Format())
+    {
+      debug.Println("SETUP", "LittleFS Formatado com sucesso.", "WARN");
+    }else{
+      debug.Println("SETUP", "Falha ao formatar LittleFS.", "ERROR");
+    }
+    xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OnLedVM);    
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    ESP.restart();
+  }
+ 
+
+  
 
   /*
 
@@ -78,12 +104,12 @@ void setup()
   */
 
   debug.Println("SETUP", "Verificando se portal já foi configurado", "WARN");
-  _WifiDataTemp = MyDataDispenser.Read_WifiDataDisp();
+  App_NetworkConfig = DispenserStrorage.Read_NetworkCfg_From_Ram();
 
   debug.Print("SETUP", "Modo de operação do dispenser : ", "WARN");
-  debug.Println("SETUP", String(_WifiDataTemp.Mode), "WARN");
+  debug.Println("SETUP", String(App_NetworkConfig.Mode), "WARN");
   debug.Println("SETUP", " 0 = não configurado || 1 = modo master || 2 = modo slave ", "WARN");
-  debug.Println("SETUP", "SSID : " + String(_WifiDataTemp.Ssid) + " PASSWORD :" + String(_WifiDataTemp.Pass), "WARN");
+  debug.Println("SETUP", "SSID : " + String(App_NetworkConfig.Ssid) + " PASSWORD :" + String(App_NetworkConfig.Pass), "WARN");
 
   debug.Print("SETUP", "Requisicao de configuracao via DipSwitch_Bit0 ? ", "WARN");
   bool DipSwitch_Bit0_value = digitalRead(DipSwitch_Bit0);
@@ -91,7 +117,7 @@ void setup()
   debug.Println("SETUP", DipSwitch_Bit0_value ? "SIM" : "NAO", "WARN");
 
   // se o portal não foi configurado, ou houve uma requisição via pinos
-  if (_WifiDataTemp.Mode == 0 || DipSwitch_Bit0_value)
+  if (App_NetworkConfig.Mode == 0 || DipSwitch_Bit0_value)
   {
 
     // se entrou aqui, é porque não existe configuração ou foi forçada pelos dipswitch
@@ -111,7 +137,7 @@ void setup()
   {
 
     // verifica se o dispenser foi configurado em modo master == 1
-    if (_WifiDataTemp.Mode == 1)
+    if (App_NetworkConfig.Mode == 1)
     {
       debug.Println("SETUP", "Inicializando Dispenser em modo Master", "WARN");
       bool StatusWifiConnect = _WifiConnect();
@@ -180,6 +206,13 @@ void xTask_SelectComunicationMode(void *pvParameters)
   while (pdTRUE)
   {
     bool ConfigDone = MyPortalConfig.HandleClient();
+
+    /*
+    Obrigatoriamente o  ESP32 deve reiniciar, para que as configurações seja salva no arquivo cfg_wifi.bin    
+    
+    
+    
+    */
 
     // verifica que se a configuração do portal já foi feita.
     if (ConfigDone)
@@ -457,12 +490,12 @@ bool _WifiConnect()
 {
 
   debug.Println("_WifiConnect()", "Dados do Wifi", "WARN");
-  debug.Println("_WifiConnect()", "SSID : " + String(_WifiDataTemp.Ssid) + " PASSWORD :" + String(_WifiDataTemp.Pass), "WARN");
+  debug.Println("_WifiConnect()", "SSID : " + String(App_NetworkConfig.Ssid) + " PASSWORD :" + String(App_NetworkConfig.Pass), "WARN");
   // aguarda intervalo  caso passou, retorna false de  pois nao conseguiu se conectar no wifi
-  if (_WifiDataTemp.Ssid != "" && _WifiDataTemp.Pass != "")
+  if (App_NetworkConfig.Ssid != "" && App_NetworkConfig.Pass != "")
   {
 
-    WiFi.begin(_WifiDataTemp.Ssid, _WifiDataTemp.Pass);
+    WiFi.begin(App_NetworkConfig.Ssid, App_NetworkConfig.Pass);
     debug.Println("_WifiConnect()", "Iniciando comunicacao WIFI", "WARN");
 
     const unsigned long WifiInterval = 15000 + millis(); // Tempo que espera o para fazer conexçao com wifi
@@ -583,24 +616,7 @@ void PrintTime()
   debug.Println("PrintTime", buffer, "WARN");
 }
 
-// Função para formatar o MAC address
-String macToString(const uint8_t *mac)
-{
-  char buf[18]; // 6 bytes MAC -> 17 caracteres + null terminator
-  snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
-           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-  return String(buf);
-}
 
-/*
-// Função para formatar o MAC address
-String ID_ToString(const uint8_t* ID) {
-  char buf[12]; // 6 bytes MAC -> 17 caracteres + null terminator
-  snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X",
-  ID[0], ID[1], ID[2], ID[3]);
-  return String(buf);
-}
-  */
 
 uint32_t getUnixTime()
 {
@@ -608,6 +624,7 @@ uint32_t getUnixTime()
   time(&now);
   return static_cast<uint32_t>(now);
 }
+
 
 // Função para enviar o POST
 void enviarPost()
@@ -632,6 +649,7 @@ void enviarPost()
 
   // Serializar JSON
   String payload;
+  
   serializeJson(doc, payload);
 
   // Configurar HTTP
@@ -654,6 +672,7 @@ void enviarPost()
     debug.Println("enviarPost()", errorMessage , "INFO");
   }
 }
+ 
 
 /*---------------------------------------------------------------------------------------- */
 
@@ -670,6 +689,63 @@ void MontaRegistros(uint8_t event_id, CardRFID idCard){
   }  
 
 };
+
+
+
+// Função para formatar o MAC address
+String macToString(const uint8_t *mac)
+{
+    char buf[18]; // 6 bytes MAC -> 17 caracteres + null terminator
+    snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    return String(buf);
+}
+
+String IDToString(uint32_t valor)
+{
+    // Buffer para armazenar a string formatada ("XX:XX:XX:XX" -> 11 caracteres + '\0')
+    char buffer[12];
+
+    // Extraindo os bytes, assumindo que o byte0 é o mais significativo
+    uint8_t byte0 = (valor >> 24) & 0xFF;
+    uint8_t byte1 = (valor >> 16) & 0xFF;
+    uint8_t byte2 = (valor >> 8) & 0xFF;
+    uint8_t byte3 = valor & 0xFF;
+
+    // Formata a string com dois dígitos hexadecimais para cada byte, em letras maiúsculas
+    sprintf(buffer, "%02X:%02X:%02X:%02X", byte0, byte1, byte2, byte3);
+
+    return String(buffer);
+}
+
+String MontaJson_To_API(DispenserData::DataTo_API _DataTo_API, size_t size_data_api)
+{
+    DispenserData::DataTo_API Internal_Data_To_API = _DataTo_API;
+    size_t Internal_size_data_api = size_data_api;
+    JsonDocument doc;
+    
+    
+    // Cria (ou define) o array "records" no objeto raiz
+    // Segundo a nova abordagem, inicializamos a chave "records" como um JsonArray:
+    doc["records"] = JsonArray();
+    JsonArray records = doc["records"].to<JsonArray>();
+
+    // Percorre os registros e adiciona cada um como objeto no array
+    for (size_t i = 0; i < size_data_api; i++)
+    {
+        JsonObject record = records.add<JsonObject>();
+        record["hw_id"] = macToString(_DataTo_API.data[i].hw_id);
+        record["freepd"] = _DataTo_API.data[i].free;
+        record["event_id"] = _DataTo_API.data[i].event_id;
+        record["data"] = _DataTo_API.data[i].data;
+        record["timestamp"] = _DataTo_API.data[i].timestamp;
+    }
+
+    // Serializa o documento para uma String
+    String payload;
+    serializeJson(doc, payload);
+    return payload;
+}
 
 
 

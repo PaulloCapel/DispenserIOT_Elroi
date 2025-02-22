@@ -88,8 +88,8 @@ void WifiPortal::handleSave()
     std::string _PassString = std::string(password.c_str());    
     uint16_t _SyncTime = 1500;
 
-    dispenserData.Write_WifiDataDisp(_SsidString, _PassString, _Mode, _SyncTime);
-
+    dispenserData.Write_NetworkCfg_To_Flash(_SsidString, _PassString, _Mode, _SyncTime, 0);
+   
     server.send(200, "text/html; charset=UTF-8", "<html><body><h2>Configurações Salvas!</h2></body></html>");
     debug.Println("WifiPortal.handleSave()", "Dados do portal salvo", "INFO");
 
