@@ -37,7 +37,7 @@ struct ApiStatus
     uint32_t timestamp;
 };
 
-bool AtualizaTime = false;
+bool WifiConnectSuccess = false, DispenserOnline = false, TimeSincronized = false;
 
 // structs do processo
 
@@ -61,6 +61,20 @@ uint8_t EventID_HW_RADIOE32EBYTE_ERROR = 202;   // erro no modulo E32 91520D EBY
 // eventos de erro software 226 - 255
 
 uint8_t EventID_SW_SPIFFS_ERROR = 226; 
+
+
+
+//structs de processo
+
+struct Temporizador
+{
+    unsigned long LastTime;
+    unsigned long Interval; 
+    
+};
+
+bool HW_PN532_Initizlized = false;
+
 
 
 

@@ -358,7 +358,7 @@ bool DispenserData::Clear_NetworkCfg()
     }
 }
 
-bool DispenserData::Write_NetworkCfg_To_Flash(const std::string &_Ssid, const std::string &_Pass, uint8_t _Mode, uint16_t _SyncTime, uint16_t _MasterAddress)
+bool DispenserData::Write_NetworkCfg_To_Flash(const std::string &_Ssid, const std::string &_Pass, uint8_t _Mode, uint16_t _SyncTime, uint16_t _MasterAddress, bool _FirstConnectionSucces)
 {
     
     // Copia o SSID para a estrutura, garantindo que não ultrapasse o tamanho do buffer
@@ -372,11 +372,12 @@ bool DispenserData::Write_NetworkCfg_To_Flash(const std::string &_Ssid, const st
     Internal_NetworkCfg_RAM.Mode = _Mode;
     Internal_NetworkCfg_RAM.SyncTime = _SyncTime;
     Internal_NetworkCfg_RAM.Assinatura = Ass_Storage;
+    Internal_NetworkCfg_RAM.FirstConnectionSucces = _FirstConnectionSucces;
 
         File wifiFile = LittleFS.open(_filenameNetworkCfg, FILE_WRITE); // Alterado para modo "w"
         if (!wifiFile)
         {
-            debug.Println("Write_NetworkCfg_To_Flash", "Erro ao criar /cfg_wifi.bin", "ERROR");
+            debug.Println("Write_NetworkCfg_To_Flash", "Erro ao criar /network_cfg.bin", "ERROR");
             return false;
         }
 
@@ -389,10 +390,11 @@ bool DispenserData::Write_NetworkCfg_To_Flash(const std::string &_Ssid, const st
 
         if (_written != sizeof(Str_NetworkCfg))
         {
-            debug.Println("Write_NetworkCfg_To_Flash", "Escrita incompleta em /cfg_wifi.bin", "ERROR");
+            debug.Println("Write_NetworkCfg_To_Flash", "Escrita incompleta em /network_cfg.bin", "ERROR");
             LittleFS.remove(_filenameNetworkCfg);
             return false;
         }
+        
  return true;
 }
 

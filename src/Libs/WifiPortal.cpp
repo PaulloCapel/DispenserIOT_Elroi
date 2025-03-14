@@ -38,7 +38,9 @@ void WifiPortal::ApMode()
     WiFi.softAP(AP_Name, AP_password);
     debug.Println("WifiPortal.ApMode()", "AP Password : " + AP_password, "WARN");
     IPAddress myIP = WiFi.softAPIP();
-    debug.Println("WifiPortal.ApMode()", "AP IP address: " + String(myIP), "WARN");
+    char ipStr[16]; // "xxx.xxx.xxx.xxx" + '\0' (máximo 15 caracteres)
+    sprintf(ipStr, "%d.%d.%d.%d", myIP[0], myIP[1], myIP[2], myIP[3]);
+    debug.Println("WifiPortal.ApMode()", "AP IP address: " + String(ipStr), "WARN");
 
     // cria handle de funções
     server.on("/", [this]()
@@ -76,20 +78,20 @@ void WifiPortal::handleSave()
 
     String ssid = server.arg("ssid");
     String password = server.arg("password");
-    String modeStr = server.arg("communicationMode");    
+    String modeStr = server.arg("communicationMode");
 
     debug.Println("WifiPortal.handleSave()", "Metodo de comunicação : " + modeStr, "INFO");
     debug.Println("WifiPortal.handleSave()", " 1 = modo master || 2 = modo slave ", "WARN");
     debug.Println("WifiPortal.handleSave()", "ssid : " + ssid, "INFO");
     debug.Println("WifiPortal.handleSave()", "password : " + password, "INFO");
 
-    uint8_t _Mode = (uint8_t)modeStr.toInt(); 
+    uint8_t _Mode = (uint8_t)modeStr.toInt();
     std::string _SsidString = std::string(ssid.c_str());
-    std::string _PassString = std::string(password.c_str());    
+    std::string _PassString = std::string(password.c_str());
     uint16_t _SyncTime = 1500;
 
-    dispenserData.Write_NetworkCfg_To_Flash(_SsidString, _PassString, _Mode, _SyncTime, 0);
-   
+    dispenserData.Write_NetworkCfg_To_Flash(_SsidString, _PassString, _Mode, _SyncTime, 0, false);
+
     server.send(200, "text/html; charset=UTF-8", "<html><body><h2>Configurações Salvas!</h2></body></html>");
     debug.Println("WifiPortal.handleSave()", "Dados do portal salvo", "INFO");
 
@@ -145,7 +147,6 @@ void WifiPortal::performScan()
     }
 };
 
-
 String WifiPortal::classifySignal(int dBm)
 {
     if (dBm >= -40)
@@ -159,7 +160,6 @@ String WifiPortal::classifySignal(int dBm)
     else
         return "Muito Ruim"; // Sinal praticamente inutilizável
 }
-
 
 bool WifiPortal::HandleClient()
 {

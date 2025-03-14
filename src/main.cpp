@@ -15,14 +15,12 @@ String MontaJson_To_API(DispenserData::DataTo_API _DataTo_API, size_t size_data_
 
 // --------------------------------------------------------------------------------------------------
 
-
 // -------------------------------FUNÇÕES DA API-------------------------------------------------
 
 ApiStatus StatusAPI();
 void enviarPost();
 
 // ----------------------------------------------------------------------------------------------
-
 
 //-------------------------------INSTANCIAS DE LIBS PADRÕES----------------------------------------
 
@@ -32,21 +30,16 @@ Adafruit_PN532 nfc(PN532_SDA, PN532_SLC);
 
 // ----------------------------------------------------------------------------------------------
 
-
 //-------------------------------INSTANCIAS DE LIBS PROPRIAS----------------------------------------
 
 myDebug debug(true); // cria instancia para lib de debug serial
 A041SK DetectorDeMaos(30, 100, S_DetectorPin);
 // RV1_Timer PotenciometroTemporizador(1000, 5000, S_TemporizadorPin);
 
-DispenserData DispenserStrorage(debug); // cria instancia dados LittleFS, e repassa  instancia do debug compartilhada
+DispenserData DispenserStrorage(debug);              // cria instancia dados LittleFS, e repassa  instancia do debug compartilhada
 WifiPortal MyPortalConfig(debug, DispenserStrorage); // cria instancia do portal, e repassa  instancia do debug compartilhada
 
-
-
-
 // ----------------------------------------------------------------------------------------------
-
 
 void setup()
 {
@@ -67,7 +60,7 @@ void setup()
   xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM1Hz); // da um sinal de vida
 
   debug.Println("SETUP", "Inicializando Sistemas de arquivos do sistema", "WARN");
-  bool StrorageInicialization = DispenserStrorage.begin();  
+  bool StrorageInicialization = DispenserStrorage.begin();
   if (StrorageInicialization)
   {
     debug.Println("SETUP", "Sistemas de arquivos inicializados", "WARN");
@@ -76,20 +69,19 @@ void setup()
   {
     debug.Println("SETUP", "Sistemas de arquivos corrompidos", "WARN");
     vTaskDelay(pdMS_TO_TICKS(1000));
-    debug.Println("SETUP", "Formatando LittleFS", "WARN");    
+    debug.Println("SETUP", "Formatando LittleFS", "WARN");
     if (DispenserStrorage.Format())
     {
       debug.Println("SETUP", "LittleFS Formatado com sucesso.", "WARN");
-    }else{
+    }
+    else
+    {
       debug.Println("SETUP", "Falha ao formatar LittleFS.", "ERROR");
     }
-    xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OnLedVM);    
+    xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OnLedVM);
     vTaskDelay(pdMS_TO_TICKS(1000));
     ESP.restart();
   }
- 
-
-  
 
   /*
 
@@ -109,11 +101,12 @@ void setup()
   debug.Print("SETUP", "Modo de operação do dispenser : ", "WARN");
   debug.Println("SETUP", String(App_NetworkConfig.Mode), "WARN");
   debug.Println("SETUP", " 0 = não configurado || 1 = modo master || 2 = modo slave ", "WARN");
-  debug.Println("SETUP", "SSID : " + String(App_NetworkConfig.Ssid) + " PASSWORD :" + String(App_NetworkConfig.Pass), "WARN");
+  debug.Println("SETUP", "SSID : " + String(App_NetworkConfig.Ssid) + " || PASSWORD :" + String(App_NetworkConfig.Pass), "WARN");
 
   debug.Print("SETUP", "Requisicao de configuracao via DipSwitch_Bit0 ? ", "WARN");
-  bool DipSwitch_Bit0_value = digitalRead(DipSwitch_Bit0);
-  delay(250);
+  // bool DipSwitch_Bit0_value = digitalRead(DipSwitch_Bit0);
+  bool DipSwitch_Bit0_value = false;
+  vTaskDelay(pdMS_TO_TICKS(250));
   debug.Println("SETUP", DipSwitch_Bit0_value ? "SIM" : "NAO", "WARN");
 
   // se o portal não foi configurado, ou houve uma requisição via pinos
@@ -132,59 +125,67 @@ void setup()
     xTaskCreatePinnedToCore(xTask_SelectComunicationMode, "TASK0", 4096, NULL, 1, &xTask_SelectComunicationModeHandle, APP_CPU_NUM);
     vTaskDelay(pdMS_TO_TICKS(250));
   }
-  // se o portal já foi configurado
-  else
+  // se o portal já foi configurado entra para modo de seleção master / slave
+  if (App_NetworkConfig.Mode != 0)
   {
-
-    // verifica se o dispenser foi configurado em modo master == 1
+    // modo de inicilização master
     if (App_NetworkConfig.Mode == 1)
     {
       debug.Println("SETUP", "Inicializando Dispenser em modo Master", "WARN");
-      bool StatusWifiConnect = _WifiConnect();
-      if (StatusWifiConnect)
+      WifiConnectSuccess = _WifiConnect();
+      if (WifiConnectSuccess)
       {
         debug.Println("SETUP", "Criando Task Metodo ComunicationMaster", "WARN");
-        xTaskCreatePinnedToCore(xTask_ModeMaster, "TASK2", 8192, NULL, 1, &xTask_ModeMasterHandle, PRO_CPU_NUM);
       }
       else
       {
         debug.Println("SETUP", "Não foi possivel se conectar no wifi", "ERROR");
-        delay(3000);
-        ESP.restart();
-        // TODO :  se não conectar wifi o que fazer ?????
       }
+      xTaskCreatePinnedToCore(xTask_ModeMaster, "TASK2", 8192, NULL, 1, &xTask_ModeMasterHandle, PRO_CPU_NUM);
     }
-    // se não é  == 1 então slave
-    else
+    // modo de inicialização slave
+    if (App_NetworkConfig.Mode == 2)
     {
-
       debug.Println("SETUP", "Inicializando Dispenser em modo Slave", "WARN");
       xTaskCreatePinnedToCore(xTask_ModeSlave, "TASK1", 4096, NULL, 1, &xTask_ModeSlaveHandle, PRO_CPU_NUM);
     }
   }
 
-  nfc.begin();
-
-  uint32_t versiondata = nfc.getFirmwareVersion();
-  if (!versiondata)
+  // inicializa modulo PN532, caso inicializado com sucesso, cria a tarefa de controle do dispenser
+  debug.Println("SETUP", "Inicializando modulo PN532", "WARN");
+  vTaskDelay(pdMS_TO_TICKS(250));
+  if (nfc.begin())
   {
-    Serial.print("Didn't find PN53x board");
-    while (1)
-      ; // halt
+    debug.Println("SETUP", "PN532 Inicializando, verificando versão : ", "WARN");
+    HW_PN532_Initizlized = true;
+    uint32_t versiondata = nfc.getFirmwareVersion();
+    if (!versiondata)
+    {
+      debug.Println("SETUP", "Não foi possivel ler o modulo", "WARN");
+      // adicionar ao manipulador de eventos, um registro de falha no modulo
+    }
+    else
+    {
+
+      char debugMessage[50]; // Ajuste o tamanho conforme necessário
+      sprintf(debugMessage, "PN5%X FW ver. %d.%d",
+              (versiondata >> 24) & 0xFF,
+              (versiondata >> 16) & 0xFF,
+              (versiondata >> 8) & 0xFF);
+
+      debug.Print("SETUP", debugMessage, "WARN");
+      debug.Println("SETUP", "", "WARN");
+      
+      xTaskCreatePinnedToCore(xTask_ControlDispenser, "TASK20", 2048, NULL, 1, &xTask_ControlDispenserHandle, tskNO_AFFINITY);
+    
+    }
   }
-  // Got ok data, print it out!
-  Serial.print("Found chip PN5");
-  Serial.println((versiondata >> 24) & 0xFF, HEX);
-  Serial.print("Firmware ver. ");
-  Serial.print((versiondata >> 16) & 0xFF, DEC);
-  Serial.print('.');
-  Serial.println((versiondata >> 8) & 0xFF, DEC);
-
- 
-  xTaskCreatePinnedToCore(xTask_ControlDispenser, "TASK20", 2048, NULL, 1, &xTask_ControlDispenserHandle, tskNO_AFFINITY);
-
-  delay(100);
-  xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVD1Hz);
+  else
+  {
+    HW_PN532_Initizlized = false;
+  }
+  debug.Println("SETUP", "Setup Finalizado", "WARN");
+  
 };
 
 void loop()
@@ -201,23 +202,23 @@ void xTask_SelectComunicationMode(void *pvParameters)
   MyPortalConfig.ApMode(); // Inicializa o portal AP
 
   unsigned long lastTime = 0;
-  const unsigned long interval = 2000; // tempo de demostração de portal ativo led
+  const unsigned long interval = 500; // tempo de demostração de portal ativo led
 
   while (pdTRUE)
   {
     bool ConfigDone = MyPortalConfig.HandleClient();
 
     /*
-    Obrigatoriamente o  ESP32 deve reiniciar, para que as configurações seja salva no arquivo cfg_wifi.bin    
-    
-    
-    
+    Obrigatoriamente o  ESP32 deve reiniciar, para que as configurações seja salva no arquivo cfg_wifi.bin
+
+
+
     */
 
     // verifica que se a configuração do portal já foi feita.
     if (ConfigDone)
     {
-      xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OffLedVM_VD);
+      xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM_VD1Hz);
       delay(3000);
       ESP.restart();
     }
@@ -241,60 +242,172 @@ void xTask_ModeMaster(void *pvParameters)
 {
 
   debug.Println("xTask_ModeMaster", "Inicializando dados da tarefa", "WARN");
+  
   // UBaseType_t highWaterMark;
 
   ApiStatus _StatusAPI;
 
-  // variaveis de temporizador de atualização de timer dispenser
-  unsigned long LastTime_AtualizaTime;
-  const unsigned long Interval_AtualizaTime = 1807000; // atualização a cada 30 minutos
-
-  // variaveis de temporizador metodo post api
-  unsigned long LastTime_PostTime;
-  //const unsigned long Interval_PostTime = 599998; // atualização a cada 5 minutos
-  const unsigned long Interval_PostTime = 179998; // atualização a cada 3 minutos
-
   unsigned long currentTime = 0;
+  int TryConnectWiFi_Count = 0, TryConnectAPI_Count = 0;
+
+  Temporizador TimerAtualizaTime;
+  TimerAtualizaTime.LastTime = 0;       // inicializa o temporizador
+  TimerAtualizaTime.Interval = 3600000; // a cada 1 hora
+  //TimerAtualizaTime.Interval = 60000; // a cada 1 hora
+  Temporizador TimerTentaConectartWifi_1;
+  TimerTentaConectartWifi_1.LastTime = 0;      // inicializa o temporizador
+  TimerTentaConectartWifi_1.Interval = 180000; // a cada 2 minutos
+  Temporizador TimerTentaConectartWifi_2;
+  TimerTentaConectartWifi_2.LastTime = 0;      // inicializa o temporizador
+  TimerTentaConectartWifi_2.Interval = 900000; // a cada 15 minutos
+  Temporizador TimerLed_2seg;
+  TimerLed_2seg.LastTime = 0;      // inicializa o temporizador
+  TimerLed_2seg.Interval = 2000; // a cada 2seg
+
+  bool AtualizaRelogio_PrimTentativa = false;
+
+  vTaskDelay(pdMS_TO_TICKS(3000));
 
   while (pdTRUE)
   {
-    // função de atualização de time dispenser chama a cada 1 minuto, ou na primeira chamada tarefa
-    currentTime = millis();
-    if ((currentTime - LastTime_AtualizaTime >= Interval_AtualizaTime) || !AtualizaTime)
+
+    // se não conectou na primeira chamada tenta por mais 5 vezes antes de desligar o esp
+    if (!WifiConnectSuccess)
     {
-      debug.Println("xTask_ModeMaster", "Solicitação de atualização time Dispenser", "WARN");
-      _StatusAPI = StatusAPI();
-      if (_StatusAPI.req)
-      {
-        struct timeval tv;
-        tv.tv_sec = _StatusAPI.timestamp;
-        tv.tv_usec = 0;
-
-        if (settimeofday(&tv, NULL) != 0)
+     
+      // timer do pisca led
+      if ((millis() - TimerLed_2seg.LastTime >= TimerLed_2seg.Interval))
         {
-          debug.Println("xTask_ModeMaster", "Erro ao configurar o horário!", "WARN");
+          xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM_VD1Hz);
+          TimerLed_2seg.LastTime = millis();
         }
-        else
-        {
-          debug.Println("xTask_ModeMaster", "Horário configurado com sucesso!", "WARN");
-          PrintTime();
 
-          AtualizaTime = true;
+
+      
+      // se ele não se conectou no inicio abrimos 2 possibilidades
+      // 1 - wifi / pass configuradas erradas
+      // 2 - wifi indisponivel
+      // Atravez da flag App_NetworkConfig.FirstConnectionSucces sabemos se ele se conectou alguma vez
+      
+      // se o dispenser se conectou por uma vez se quer ele entra em um loop grande de espera
+      if (App_NetworkConfig.FirstConnectionSucces)
+      {
+        // a cada TimerTentaConectartWifi.Interval ( 15 minuto ) segundos tenta se conectar no wifi
+        if ((millis() - TimerTentaConectartWifi_2.LastTime >= TimerTentaConectartWifi_2.Interval))
+        {
+          WifiConnectSuccess = _WifiConnect();
+          if (WifiConnectSuccess)
+          {
+            debug.Println("xTask_ModeMaster", "Conectado ao wifi com sucesso", "WARN");
+          }
+          else
+          {
+            debug.Println("xTask_ModeMaster", "Falha ao se conectar ao wifi", "ERROR");
+          }
+          vTaskDelay(pdMS_TO_TICKS(500));
+          TimerTentaConectartWifi_2.LastTime = millis();
         }
       }
-      else
+      // se ele nunca se conectou, ele tenta se conectar 5 vezes e desliga
+      // tempo entre as tentativas de conexão é de 2min TimerTentaConectartWifi_1.Interval
+      
+      if(!App_NetworkConfig.FirstConnectionSucces)
       {
-        debug.Println("xTask_ModeMaster", "Falha ao solicitar StatusAPI()", "ERROR");
+        // enquanto passa o tempo printa dados a cada 1000ms 
+        
+        // a cada TimerTentaConectartWifi.Interval ( 2 minuto ) segundos tenta se conectar no wifi
+        if ((millis() - TimerTentaConectartWifi_1.LastTime >= TimerTentaConectartWifi_1.Interval))
+        {
+          debug.Println("xTask_ModeMaster", "Tentando se conectar ao Wifi pela tentativa nº :" + String(TryConnectWiFi_Count), "WARN");
+          WifiConnectSuccess = _WifiConnect();
+          if (WifiConnectSuccess)
+          {
+            debug.Println("xTask_ModeMaster", "Conectado ao wifi com sucesso", "WARN");
+          }
+          else
+          {
+            debug.Println("xTask_ModeMaster", "Falha ao se conectar ao wifi tentativa nº : " + String(TryConnectWiFi_Count), "ERROR");
+            if (TryConnectWiFi_Count >= 5)
+            {
+              // devemos colocar um semaforo aqui pois se nenhum processo esta sendo feito ele desliga
+              debug.Println("xTask_ModeMaster", "Dispenser tentou se conectar 5x e houve falha, solicitando reinicio", "ERROR");
+              // implementar uma função dedicada com um semaforo que olha para todas as funções criticas
+              // e se nenhuma estiver sendo executada ele desliga o esp
+              DispenserStrorage.Clear_NetworkCfg();
+              ESP.restart();
+            }
+          }
+          vTaskDelay(pdMS_TO_TICKS(500));
+
+          TryConnectWiFi_Count++;
+          TimerTentaConectartWifi_1.LastTime = millis();
+        }
       }
-      LastTime_AtualizaTime = millis();
     }
+
+    // já se conectou ao ligar o dispenser pela primeira x ?
+    // se se conectou no wifi pela primeira vez ao ligar sincroniza o timer do dispenser
+    // depois da 1x ele sincroniza a cada 1 horas
+
+    if (WifiConnectSuccess)
+    {
+      // faz teste de conexão a cada x segundos TimerAtualizaTime.LastTime
+      // caso seja verdadeiro, atualiza o horário do dispenser
+      // caso não seja, tenta novamente a cada 1 hora
+      if ((millis() - TimerAtualizaTime.LastTime >= TimerAtualizaTime.Interval) || !AtualizaRelogio_PrimTentativa)
+      {
+        // testa se existe conexão wifi
+        if (WiFi.status() == WL_CONNECTED)
+        {
+          debug.Println("xTask_ModeMaster", "Solicitação de atualização time Dispenser", "WARN");
+          // chama teste de time api
+          _StatusAPI = StatusAPI();
+          if (_StatusAPI.req)
+          {
+            struct timeval tv;
+            tv.tv_sec = _StatusAPI.timestamp;
+            tv.tv_usec = 0;
+
+            if (settimeofday(&tv, NULL) != 0)
+            {
+              debug.Println("xTask_ModeMaster", "Erro ao configurar o horário!", "WARN");
+              TimeSincronized = false;
+            }
+            else
+            {
+              debug.Println("xTask_ModeMaster", "Horário configurado com sucesso!", "WARN");
+              TimeSincronized = true;
+              PrintTime();
+            }
+          }
+          else
+          {
+            debug.Println("xTask_ModeMaster", "Falha ao solicitar StatusAPI()", "ERROR");
+            if (TryConnectAPI_Count >= 5)
+            {
+            }
+          }
+          AtualizaRelogio_PrimTentativa = true; // flag de entrada burla timer pela primeira tentativa
+        }
+      }
+    }
+
+    /*
+     *   confições a serem avaliadas
+     *   relogio do esp não sincronizado
+     *   em uma situação hipotetica o esp32 inicialmente não teve a sincronização com a api
+     *   e a sua nova tentativa será depois de 1 hora da sua ultima chamada
+     *   caso ouver algum registro deverá ficar pendente a atualização dos timestamp dos registros
+     */
 
     // highWaterMark = uxTaskGetStackHighWaterMark(NULL);
     // char buffer[50];                                                          // Buffer para formatar a mensagem
     // snprintf(buffer, sizeof(buffer), "Pilha livre: %u bytes", highWaterMark); // Formata a string
     // debug.Println("xTask_ModeMaster", buffer, "INFO");
     // debug.Println("xTask_ModeMaster", "Tentativa de conexão com API", "INFO");
-    //vTaskDelay(pdMS_TO_TICKS(500));
+    // vTaskDelay(pdMS_TO_TICKS(500));
+    /*
+
     currentTime = millis();
     if (currentTime - LastTime_PostTime >= Interval_PostTime)
     {
@@ -302,6 +415,7 @@ void xTask_ModeMaster(void *pvParameters)
       enviarPost();
       LastTime_PostTime = millis();
     }
+      */
 
     vTaskDelay(10); // Pequeno atraso para evitar consumir CPU desnecessariamente
   }
@@ -333,7 +447,7 @@ void xTask_ControlDispenser(void *pvParameters)
       CardRFID checkCard = NFC_Check();
       if (checkCard.succes)
       {
-        
+
         xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OnLedVM_VD);
         // apos a detecção do cartão ele deve esperar pela inteação das mão do usuario até o timeout
         bool EsperaPelasMaos = true;
@@ -352,8 +466,8 @@ void xTask_ControlDispenser(void *pvParameters)
               if (_Value)
               {
                 xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OffLedVM_VD);
-                debug.Println("xTask_ControlDispenser()", "Maos detectadas ligando bomba", "INFO"); 
-                vTaskDelay(pdMS_TO_TICKS(100));             
+                debug.Println("xTask_ControlDispenser()", "Maos detectadas ligando bomba", "INFO");
+                vTaskDelay(pdMS_TO_TICKS(100));
                 LigaBomba = true;
                 interval_Bomba = millis() + 2000; // função a ser implemenmtada do tempo do potenciometro
               }
@@ -361,7 +475,7 @@ void xTask_ControlDispenser(void *pvParameters)
 
             while (LigaBomba)
             {
-              
+
               if (millis() > interval_Bomba)
               {
                 LigaBomba = false;
@@ -373,25 +487,24 @@ void xTask_ControlDispenser(void *pvParameters)
               else
               {
                 digitalWrite(BombaPin, HIGH);
-                xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OnLedVM_VD);                
+                xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OnLedVM_VD);
               }
-              vTaskDelay(pdMS_TO_TICKS(100)); 
+              vTaskDelay(pdMS_TO_TICKS(100));
             }
           }
           else
           {
             xEventGroupSetBits(xEventGroupStatusHandle, xEvG_OffLedVM_VD);
-            vTaskDelay(50);            
+            vTaskDelay(50);
             debug.Println("xTask_ControlDispenser()", "TimeOut detector de mãos", "INFO");
             xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM1Hz);
             LigaBomba = false;
             EsperaPelasMaos = false;
             checkCard.succes = false;
-           
           }
         }
       }
-      lastTime = millis();     
+      lastTime = millis();
     }
     vTaskDelay(10); // Pequeno atraso para evitar consumir CPU desnecessariamente
   }
@@ -490,13 +603,13 @@ bool _WifiConnect()
 {
 
   debug.Println("_WifiConnect()", "Dados do Wifi", "WARN");
-  debug.Println("_WifiConnect()", "SSID : " + String(App_NetworkConfig.Ssid) + " PASSWORD :" + String(App_NetworkConfig.Pass), "WARN");
+  debug.Println("_WifiConnect()", "SSID : " + String(App_NetworkConfig.Ssid) + " ||  PASSWORD :" + String(App_NetworkConfig.Pass), "WARN");
   // aguarda intervalo  caso passou, retorna false de  pois nao conseguiu se conectar no wifi
   if (App_NetworkConfig.Ssid != "" && App_NetworkConfig.Pass != "")
   {
 
     WiFi.begin(App_NetworkConfig.Ssid, App_NetworkConfig.Pass);
-    debug.Println("_WifiConnect()", "Iniciando comunicacao WIFI", "WARN");
+   // debug.Print("_WifiConnect()", "Iniciando comunicacao WIFI : ", "WARN");
 
     const unsigned long WifiInterval = 15000 + millis(); // Tempo que espera o para fazer conexçao com wifi
     while (WiFi.status() != WL_CONNECTED)
@@ -504,25 +617,38 @@ bool _WifiConnect()
       // aguarda tempo imputado, caso nao se conectou retorna false
 
       if (millis() >= WifiInterval)
-      {
+      {       
+        debug.Println("_WifiConnect()", ".", "WARN");
         return false;
       }
       // enquanto passa o tempo printa dados a cada 1000ms
       vTaskDelay(pdMS_TO_TICKS(1000));
       xEventGroupSetBits(xEventGroupStatusHandle, xEvG_ClockLedVM1Hz);
-      Serial.print(".");
+      debug.Print("_WifiConnect()", ".", "WARN");
+      
     }
     debug.Println("_WifiConnect()", "Wi-Fi conectado", "WARN");
     IPAddress localIP = WiFi.localIP();
     String ipString = localIP.toString(); // Converte o IP para uma string
     debug.Println("_WifiConnect()", "Endereco de IP : " + ipString, "WARN");
+    // salva dados na memoria flash, que se conectou pelo menos 1x
+    if (!App_NetworkConfig.FirstConnectionSucces)
+    {
+      DispenserStrorage.Write_NetworkCfg_To_Flash(
+          App_NetworkConfig.Ssid,
+          App_NetworkConfig.Pass,
+          App_NetworkConfig.Mode,
+          App_NetworkConfig.SyncTime,
+          App_NetworkConfig.LoraMasterCfg.myAddress,
+          true);
+
+      App_NetworkConfig.FirstConnectionSucces = true;
+    }
 
     return true;
   }
   else
-  {
-    debug.Println("_WifiConnect()", "SSID ou PASSWORD invalidos, reiniciando dados de congiguração do portal", "ERROR");
-
+  {    
     return false;
   }
 }
@@ -570,9 +696,11 @@ ApiStatus StatusAPI()
   http.begin(url);                   // Inicia a conexão com a URL
   int httpResponseCode = http.GET(); // Faz a requisição GET
   vTaskDelay(pdMS_TO_TICKS(50));
+  debug.Println("StatusAPI", "Retorno HTTP Code : " + String(httpResponseCode), "ERROR");
+    
   //
 
-  if (httpResponseCode > 0)
+  if (httpResponseCode == 200 || httpResponseCode == 201)
   {
 
     String payload = http.getString(); // Obtém a resposta como string
@@ -587,11 +715,13 @@ ApiStatus StatusAPI()
     }
     else
     {
+      
       debug.Println("StatusAPI", "Erro ao parsear JSON!", "ERROR");
     }
   }
   else
   {
+   
     debug.Println("StatusAPI", "Erro na requisição HTTP, código: " + String(httpResponseCode), "ERROR");
   }
 
@@ -616,15 +746,12 @@ void PrintTime()
   debug.Println("PrintTime", buffer, "WARN");
 }
 
-
-
 uint32_t getUnixTime()
 {
   time_t now;
   time(&now);
   return static_cast<uint32_t>(now);
 }
-
 
 // Função para enviar o POST
 void enviarPost()
@@ -649,7 +776,7 @@ void enviarPost()
 
   // Serializar JSON
   String payload;
-  
+
   serializeJson(doc, payload);
 
   // Configurar HTTP
@@ -660,99 +787,92 @@ void enviarPost()
   int httpCode = http.POST(payload);
 
   if (httpCode > 0)
-  {    
+  {
     debug.Println("enviarPost()", "Código HTTP: " + String(httpCode), "INFO");
     String response = http.getString();
-    debug.Println("enviarPost()", "Resposta HTTP: " + response, "INFO");    
+    debug.Println("enviarPost()", "Resposta HTTP: " + response, "INFO");
     http.end();
   }
   else
   {
     String errorMessage = "Erro na requisição: " + String(http.errorToString(httpCode).c_str());
-    debug.Println("enviarPost()", errorMessage , "INFO");
+    debug.Println("enviarPost()", errorMessage, "INFO");
   }
 }
- 
 
 /*---------------------------------------------------------------------------------------- */
 
-void MontaRegistros(uint8_t event_id, CardRFID idCard){
+void MontaRegistros(uint8_t event_id, CardRFID idCard)
+{
 
   debug.Println("xTask_ModeMaster", "Efetuando registros Event_id : " + String(event_id), "WARN");
-  if (event_id == EventID_IDOK_MAOS_OK){
-     vTaskDelay(10);  //não faz nada por enquanto
-  }else if (event_id == EventID_IDOK_MAOS_NOK){
-    vTaskDelay(10);//não faz nada por enquanto  
-    }
-  else if (event_id == EventID_NIVELDISPENSER){
-    vTaskDelay(10);//não faz nada por enquanto
-  }  
-
+  if (event_id == EventID_IDOK_MAOS_OK)
+  {
+    vTaskDelay(10); // não faz nada por enquanto
+  }
+  else if (event_id == EventID_IDOK_MAOS_NOK)
+  {
+    vTaskDelay(10); // não faz nada por enquanto
+  }
+  else if (event_id == EventID_NIVELDISPENSER)
+  {
+    vTaskDelay(10); // não faz nada por enquanto
+  }
 };
-
-
 
 // Função para formatar o MAC address
 String macToString(const uint8_t *mac)
 {
-    char buf[18]; // 6 bytes MAC -> 17 caracteres + null terminator
-    snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    return String(buf);
+  char buf[18]; // 6 bytes MAC -> 17 caracteres + null terminator
+  snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  return String(buf);
 }
 
 String IDToString(uint32_t valor)
 {
-    // Buffer para armazenar a string formatada ("XX:XX:XX:XX" -> 11 caracteres + '\0')
-    char buffer[12];
+  // Buffer para armazenar a string formatada ("XX:XX:XX:XX" -> 11 caracteres + '\0')
+  char buffer[12];
 
-    // Extraindo os bytes, assumindo que o byte0 é o mais significativo
-    uint8_t byte0 = (valor >> 24) & 0xFF;
-    uint8_t byte1 = (valor >> 16) & 0xFF;
-    uint8_t byte2 = (valor >> 8) & 0xFF;
-    uint8_t byte3 = valor & 0xFF;
+  // Extraindo os bytes, assumindo que o byte0 é o mais significativo
+  uint8_t byte0 = (valor >> 24) & 0xFF;
+  uint8_t byte1 = (valor >> 16) & 0xFF;
+  uint8_t byte2 = (valor >> 8) & 0xFF;
+  uint8_t byte3 = valor & 0xFF;
 
-    // Formata a string com dois dígitos hexadecimais para cada byte, em letras maiúsculas
-    sprintf(buffer, "%02X:%02X:%02X:%02X", byte0, byte1, byte2, byte3);
+  // Formata a string com dois dígitos hexadecimais para cada byte, em letras maiúsculas
+  sprintf(buffer, "%02X:%02X:%02X:%02X", byte0, byte1, byte2, byte3);
 
-    return String(buffer);
+  return String(buffer);
 }
 
 String MontaJson_To_API(DispenserData::DataTo_API _DataTo_API, size_t size_data_api)
 {
-    DispenserData::DataTo_API Internal_Data_To_API = _DataTo_API;
-    size_t Internal_size_data_api = size_data_api;
-    JsonDocument doc;
-    
-    
-    // Cria (ou define) o array "records" no objeto raiz
-    // Segundo a nova abordagem, inicializamos a chave "records" como um JsonArray:
-    doc["records"] = JsonArray();
-    JsonArray records = doc["records"].to<JsonArray>();
+  DispenserData::DataTo_API Internal_Data_To_API = _DataTo_API;
+  size_t Internal_size_data_api = size_data_api;
+  JsonDocument doc;
 
-    // Percorre os registros e adiciona cada um como objeto no array
-    for (size_t i = 0; i < size_data_api; i++)
-    {
-        JsonObject record = records.add<JsonObject>();
-        record["hw_id"] = macToString(_DataTo_API.data[i].hw_id);
-        record["freepd"] = _DataTo_API.data[i].free;
-        record["event_id"] = _DataTo_API.data[i].event_id;
-        record["data"] = _DataTo_API.data[i].data;
-        record["timestamp"] = _DataTo_API.data[i].timestamp;
-    }
+  // Cria (ou define) o array "records" no objeto raiz
+  // Segundo a nova abordagem, inicializamos a chave "records" como um JsonArray:
+  doc["records"] = JsonArray();
+  JsonArray records = doc["records"].to<JsonArray>();
 
-    // Serializa o documento para uma String
-    String payload;
-    serializeJson(doc, payload);
-    return payload;
+  // Percorre os registros e adiciona cada um como objeto no array
+  for (size_t i = 0; i < size_data_api; i++)
+  {
+    JsonObject record = records.add<JsonObject>();
+    record["hw_id"] = macToString(_DataTo_API.data[i].hw_id);
+    record["freepd"] = _DataTo_API.data[i].free;
+    record["event_id"] = _DataTo_API.data[i].event_id;
+    record["data"] = _DataTo_API.data[i].data;
+    record["timestamp"] = _DataTo_API.data[i].timestamp;
+  }
+
+  // Serializa o documento para uma String
+  String payload;
+  serializeJson(doc, payload);
+  return payload;
 }
-
-
-
-
-
-
-
 
 // programa antigo
 /*
@@ -859,4 +979,3 @@ A0221AU_Serial.begin(9600,SERIAL_8N1,A0221AU_RX_Pin,A0221AU_TX_Pin);
   // Aguarda antes de verificar novamente
   vTaskDelay(100);
 */
-

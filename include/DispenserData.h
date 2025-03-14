@@ -116,6 +116,7 @@ public:
         uint8_t Mode;                   // 0 = não configurado || 1 = modo master || 2 = modo slave
         uint16_t SyncTime;              // tempo de sincronização server
         uint32_t LastUnixTime;          // ultimo valor recebido
+        bool FirstConnectionSucces;     // flag de primeira conexão com sucesso
         uint32_t Assinatura;            // assinatura de inicialização do buffer
         Str_LoraMasterCfg LoraMasterCfg;
         StrNetworkCfgSlave LoraSlaveCfg;
@@ -189,7 +190,7 @@ public:
     * @return   Sucesso ou falha atribuida ao processo
 
     */
-    bool Write_NetworkCfg_To_Flash(const std::string &_Ssid, const std::string &_Pass, uint8_t _Mode, uint16_t _SyncTime, uint16_t _MasterAddress);
+    bool Write_NetworkCfg_To_Flash(const std::string &_Ssid, const std::string &_Pass, uint8_t _Mode, uint16_t _SyncTime, uint16_t _MasterAddress, bool _FisrtConnectionSucces);
 
     /* Função Read_Cfg_Wifi();
      * @brief    Função le os dados no arquivo na flash, e escreve os dados lidos na memoria ram.

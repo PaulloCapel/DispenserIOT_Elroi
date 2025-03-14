@@ -22,6 +22,7 @@
 #include <hardwareserial.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <ESP32Ping.h>
 
 #include <time.h>
 #include <sys/time.h>
